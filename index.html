@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#f6f5f1">
+<title>メモ帳</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="メモ帳">
+<style>
+  :root{
+    --bg:#f6f5f1;
+    --card:#ffffff;
+    --ink:#2b3035;
+    --soft:#6b7680;
+    --faint:#a4abb2;
+    --line:#e4e2db;
+    --accent:#3d6a8f;
+    --accent-bg:#e6eef5;
+    --danger:#c4554b;
+    --s-memo:#8a6d3b;   --s-memo-bg:#f5eedf;
+    --s-yaritai:#a05a7a; --s-yaritai-bg:#f6e8ef;
+    --s-todo:#3d6a8f;   --s-todo-bg:#e6eef5;
+    --s-done:#5f8a6a;   --s-done-bg:#e8f1ea;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    font-size:16px;
+    line-height:1.75;
+    padding-bottom:calc(env(safe-area-inset-bottom) + 40px);
+  }
+  button{font-family:inherit; color:inherit;}
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    max-width:560px; margin:0 auto;
+    padding:calc(env(safe-area-inset-top) + 14px) 18px 6px;
+  }
+  header h1{margin:0; font-size:20px; font-weight:700; letter-spacing:.04em;}
+  .head-right{display:flex; align-items:center; gap:12px; font-size:12.5px; color:var(--faint);}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--faint); display:inline-block; margin-right:5px;}
+  .dot.ok{background:#6aa77a;}
+  .dot.err{background:var(--danger);}
+  .link-btn{border:none; background:none; color:var(--soft); font-size:13px; cursor:pointer; padding:4px 0;}
+  .wrap{max-width:560px; margin:0 auto; padding:8px 14px 0;}
+
+  /* 入力 */
+  .compose{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:10px 12px 10px; margin:6px 0 14px;
+  }
+  .compose textarea{
+    width:100%; border:none; outline:none; resize:none; background:transparent;
+    font:inherit; font-size:16.5px; line-height:1.7; color:var(--ink);
+    min-height:54px; max-height:240px; display:block;
+  }
+  .compose textarea::placeholder{color:var(--faint);}
+  .compose-foot{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px;}
+  .compose-hint{font-size:12px; color:var(--faint);}
+  .btn-add{
+    border:none; background:var(--ink); color:#fff; font-size:14.5px; font-weight:600;
+    padding:8px 20px; border-radius:999px; cursor:pointer;
+  }
+  .btn-add:active{opacity:.8;}
+
+  /* フィルタ */
+  .chips{display:flex; gap:6px; overflow-x:auto; margin:0 0 6px; padding:2px 0 6px;}
+  .chips::-webkit-scrollbar{display:none;}
+  .chip{
+    flex:0 0 auto; border:1px solid var(--line); background:transparent; color:var(--soft);
+    font-size:14px; padding:6px 13px; border-radius:999px; cursor:pointer; white-space:nowrap;
+  }
+  .chip.active{background:var(--ink); border-color:var(--ink); color:#fff;}
+  .chip .n{opacity:.7; margin-left:4px; font-size:12.5px;}
+
+  /* セクション */
+  .sec-head{
+    display:flex; align-items:center; gap:8px; margin:18px 2px 8px;
+    font-size:14px; font-weight:700; color:var(--soft); cursor:default;
+  }
+  .sec-head .n{font-weight:400; color:var(--faint); font-size:13px;}
+  .sec-head .toggle{margin-left:auto; border:none; background:none; font-size:13px; color:var(--faint); cursor:pointer;}
+  .sec-head .stage-ico{width:34px; height:34px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply;}
+
+  /* カード */
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px 10px; margin:0 0 8px; position:relative;
+    transition:opacity .2s, transform .2s;
+  }
+  .card.leaving{opacity:0; transform:translateX(16px);}
+  .card.fresh{animation:fresh .35s ease;}
+  @keyframes fresh{from{opacity:0; transform:translateY(-8px);} to{opacity:1; transform:none;}}
+  .card-main{display:flex; gap:11px; align-items:flex-start;}
+  .check{
+    flex:0 0 auto; width:24px; height:24px; margin-top:3px; border-radius:50%;
+    border:2px solid var(--s-todo); background:transparent; cursor:pointer; padding:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .check svg{width:14px; height:14px; display:none;}
+  .card.is-done .check{background:var(--s-done); border-color:var(--s-done);}
+  .card.is-done .check svg{display:block;}
+  .body{flex:1; min-width:0;}
+  .text{
+    white-space:pre-wrap; word-break:break-word; font-size:16.5px; line-height:1.75;
+    cursor:text; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:7; overflow:hidden;
+  }
+  .card.is-done .text{color:var(--faint); text-decoration:line-through; text-decoration-color:var(--line);}
+  .more{font-size:13px; color:var(--accent); margin-top:2px; border:none; background:none; padding:0; cursor:pointer;}
+  .edit-area{
+    width:100%; border:1px solid var(--accent); border-radius:10px; padding:8px 10px; outline:none;
+    font:inherit; font-size:16.5px; line-height:1.75; resize:none; background:#fff; color:var(--ink);
+    min-height:80px;
+  }
+  .edit-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:8px;}
+  .btn-sm{border:1px solid var(--line); background:transparent; border-radius:999px; font-size:13.5px; padding:6px 16px; cursor:pointer; color:var(--soft);}
+  .btn-sm.primary{background:var(--ink); border-color:var(--ink); color:#fff;}
+  .card-foot{display:flex; align-items:center; gap:8px; margin-top:6px; padding-left:0;}
+  .stage-btn{
+    display:inline-flex; align-items:center; gap:5px; border:none; border-radius:999px;
+    padding:2px 12px 2px 3px; font-size:13px; font-weight:600; cursor:pointer;
+  }
+  .stage-btn img{width:28px; height:28px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply;}
+  .stage-btn.memo{background:var(--s-memo-bg); color:var(--s-memo);}
+  .stage-btn.yaritai{background:var(--s-yaritai-bg); color:var(--s-yaritai);}
+  .stage-btn.todo{background:var(--s-todo-bg); color:var(--s-todo);}
+  .stage-btn.done{background:var(--s-done-bg); color:var(--s-done);}
+  .date{font-size:12px; color:var(--faint); margin-left:auto;}
+  .picker{
+    display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);
+  }
+  .card.picking .picker{display:block;}
+  .picker-row{display:grid; grid-template-columns:repeat(4,1fr); gap:6px;}
+  .pick{
+    border:1px solid var(--line); background:transparent; border-radius:12px; padding:6px 2px 5px;
+    font-size:12.5px; color:var(--soft); cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:2px;
+  }
+  .pick img{width:46px; height:46px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply;}
+  .pick.cur{border-color:var(--ink); color:var(--ink); font-weight:700;}
+  .picker-foot{display:flex; justify-content:space-between; margin-top:8px;}
+  .del{border:none; background:none; color:var(--danger); font-size:13px; cursor:pointer; padding:4px 0;}
+
+  .empty{text-align:center; color:var(--soft); padding:34px 20px 20px;}
+  .empty img{width:120px; height:120px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply; margin-bottom:6px;}
+  .empty p{margin:0; font-size:15px;}
+
+  /* 合言葉ゲート */
+  .gate{max-width:360px; margin:12vh auto 0; padding:0 22px; text-align:center;}
+  .gate img{width:130px; height:130px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply;}
+  .gate h2{font-size:18px; margin:6px 0 4px;}
+  .gate p{font-size:13.5px; color:var(--soft); margin:0 0 14px; line-height:1.7;}
+  .gate input{
+    width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:12px;
+    font-size:16px; background:#fff; margin-bottom:10px; outline:none;
+  }
+  .gate input:focus{border-color:var(--accent);}
+  .gate .btn-add{width:100%; padding:12px;}
+  .gate .err{color:var(--danger); font-size:13.5px; min-height:20px; margin:6px 0 0;}
+  .hidden{display:none !important;}
+  .toast{
+    position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 24px); transform:translate(-50%, 20px);
+    background:var(--ink); color:#fff; font-size:13.5px; padding:8px 16px; border-radius:999px;
+    opacity:0; transition:opacity .2s, transform .2s; pointer-events:none;
+  }
+  .toast.show{opacity:1; transform:translate(-50%,0);}
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate hidden">
+  <img src="characters/memo.jpg" alt="">
+  <h2 id="gateTitle">合言葉</h2>
+  <p id="gateDesc"></p>
+  <input type="password" id="gateInput" autocomplete="off" placeholder="合言葉">
+  <input type="password" id="gateInput2" autocomplete="off" placeholder="もう一度" class="hidden">
+  <button class="btn-add" id="gateBtn">開く</button>
+  <p class="err" id="gateErr"></p>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>メモ帳</h1>
+    <div class="head-right">
+      <span><span class="dot" id="syncDot"></span><span id="syncText">同期中</span></span>
+      <button class="link-btn" id="lockBtn">ロック</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div class="compose">
+      <textarea id="newText" rows="2" placeholder="思いついたことを書く"></textarea>
+      <div class="compose-foot">
+        <span class="compose-hint" id="composeHint"></span>
+        <button class="btn-add" id="addBtn">追加</button>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div id="list"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  const DEMO = new URLSearchParams(location.search).has('demo');
+  const SUPABASE_URL = 'https://edfrjxjdzxutcjeayfac.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_GVtanlT_gDwSEQSsZPC_NQ_nEK-60x2';
+  const T_ITEMS = 'memo_items';
+  const T_META = 'memo_meta';
+  const sb = (!DEMO && window.supabase) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+  const STAGES = [
+    { key:'memo',    label:'メモ',   img:'characters/memo.jpg'    },
+    { key:'yaritai', label:'やりたい', img:'characters/yaritai.jpg' },
+    { key:'todo',    label:'ToDo',   img:'characters/todo.jpg'    },
+    { key:'done',    label:'済',     img:'characters/done.jpg'    }
+  ];
+  const SHOW_ORDER = ['todo','yaritai','memo','done'];
+  const stageOf = k => STAGES.find(s => s.key === k) || STAGES[0];
+
+  let items = [];
+  let filter = 'all';
+  let masterKey = null;
+  let pickingId = null, editingId = null;
+  const expanded = new Set();
+  let doneOpen = false;
+  let freshId = null;
+
+  const $ = id => document.getElementById(id);
+  const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+  function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1600); }
+  function setSync(state, text){ $('syncDot').className = 'dot ' + state; $('syncText').textContent = text; }
+  function fmtDate(iso){ const d = new Date(iso); return (d.getMonth()+1) + '/' + d.getDate(); }
+
+  /* ---------- 暗号化（合言葉 → AES-GCM） ---------- */
+  const b64 = bytes => { let s=''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s); };
+  const unb64 = str => { const s = atob(str); const u = new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; };
+  async function deriveKey(pass, saltB64){
+    const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), {name:'PBKDF2'}, false, ['deriveKey']);
+    return crypto.subtle.deriveKey({name:'PBKDF2', salt:unb64(saltB64), iterations:200000, hash:'SHA-256'}, km, {name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+  }
+  async function enc(text){
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const buf = await crypto.subtle.encrypt({name:'AES-GCM', iv}, masterKey, new TextEncoder().encode(text));
+    return { body:b64(new Uint8Array(buf)), iv:b64(iv) };
+  }
+  async function dec(bodyB64, ivB64){
+    const buf = await crypto.subtle.decrypt({name:'AES-GCM', iv:unb64(ivB64)}, masterKey, unb64(bodyB64));
+    return new TextDecoder().decode(buf);
+  }
+  const IDB = 'memo_list_secure';
+  const idb = () => new Promise((res, rej) => { const r = indexedDB.open(IDB, 1); r.onupgradeneeded = () => r.result.createObjectStore('keys'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  async function idbSet(k, v){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction('keys','readwrite'); tx.objectStore('keys').put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+  async function idbGet(k){ const db = await idb(); return new Promise((res, rej) => { const q = db.transaction('keys').objectStore('keys').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+  async function idbDel(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction('keys','readwrite'); tx.objectStore('keys').delete(k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+
+  async function getMeta(id){
+    const { data, error } = await sb.from(T_META).select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  async function verifyKey(key){
+    const row = await getMeta('check');
+    if (!row) return false;
+    const prev = masterKey; masterKey = key;
+    try { return (await dec(row.value, row.iv)) === 'memo-list-ok'; }
+    catch(e){ masterKey = prev; return false; }
+  }
+
+  /* ---------- データ入出力 ---------- */
+  async function loadAll(){
+    if (DEMO) return items;
+    const { data, error } = await sb.from(T_ITEMS).select('*').order('created_at', {ascending:false});
+    if (error) throw error;
+    const out = [];
+    for (const r of data){
+      try { out.push({ id:r.id, text:await dec(r.body, r.iv), stage:r.stage, created_at:r.created_at }); }
+      catch(e){ console.warn('復号できない行をスキップ', r.id); }
+    }
+    return out;
+  }
+  async function dbInsert(it){
+    if (DEMO) return;
+    const e = await enc(it.text);
+    const { error } = await sb.from(T_ITEMS).insert({ id:it.id, body:e.body, iv:e.iv, stage:it.stage, created_at:it.created_at });
+    if (error) throw error;
+  }
+  async function dbUpdate(id, patch){
+    if (DEMO) return;
+    const row = { updated_at:new Date().toISOString() };
+    if (patch.stage) row.stage = patch.stage;
+    if (patch.text !== undefined){ const e = await enc(patch.text); row.body = e.body; row.iv = e.iv; }
+    const { error } = await sb.from(T_ITEMS).update(row).eq('id', id);
+    if (error) throw error;
+  }
+  async function dbDelete(ids){
+    if (DEMO) return;
+    const { error } = await sb.from(T_ITEMS).delete().in('id', ids);
+    if (error) throw error;
+  }
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:(r&3|8)).toString(16); }));
+  async function guarded(fn){
+    try { await fn(); setSync('ok','同期済み'); }
+    catch(e){ console.error(e); setSync('err','同期できません'); toast('保存に失敗しました'); }
+  }
+
+  /* ---------- 操作 ---------- */
+  function addItem(){
+    const ta = $('newText'); const text = ta.value.trim();
+    if (!text) return;
+    const stage = (filter !== 'all') ? filter : 'memo';
+    const it = { id:uuid(), text, stage, created_at:new Date().toISOString() };
+    items.unshift(it); freshId = it.id;
+    ta.value = ''; autoGrow(ta); render();
+    guarded(() => dbInsert(it));
+  }
+  function setStage(id, stage){
+    const it = items.find(x => x.id === id); if (!it || it.stage === stage) return;
+    const el = document.querySelector('[data-id="' + id + '"]');
+    pickingId = null;
+    const apply = () => { it.stage = stage; render(); guarded(() => dbUpdate(id, {stage})); };
+    if (el){ el.classList.add('leaving'); setTimeout(apply, 180); } else apply();
+  }
+  function saveEdit(id, text){
+    const it = items.find(x => x.id === id); editingId = null;
+    text = text.trim();
+    if (it && text && text !== it.text){ it.text = text; guarded(() => dbUpdate(id, {text})); }
+    render();
+  }
+  function removeItem(id){
+    if (!confirm('このメモを削除しますか？')) return;
+    items = items.filter(x => x.id !== id); pickingId = null; render();
+    guarded(() => dbDelete([id]));
+  }
+  function clearDone(){
+    const ids = items.filter(x => x.stage === 'done').map(x => x.id);
+    if (!ids.length || !confirm('済のメモ ' + ids.length + ' 件をすべて削除しますか？')) return;
+    items = items.filter(x => x.stage !== 'done'); render();
+    guarded(() => dbDelete(ids));
+  }
+
+  /* ---------- 描画 ---------- */
+  function cardHtml(it){
+    const st = stageOf(it.stage);
+    const isEdit = editingId === it.id, isPick = pickingId === it.id;
+    const long = it.text.length > 140 || it.text.split('\n').length > 6;
+    const open = expanded.has(it.id);
+    const check = (it.stage === 'todo' || it.stage === 'done')
+      ? '<button class="check" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
+    const bodyHtml = isEdit
+      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="edit-actions"><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
+      : '<div class="text" data-act="edit" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + esc(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '');
+    const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
+      '<button class="pick' + (s.key === it.stage ? ' cur' : '') + '" data-act="stage" data-stage="' + s.key + '"><img src="' + s.img + '" alt="">' + s.label + '</button>').join('') +
+      '</div><div class="picker-foot"><button class="del" data-act="del">削除</button></div></div>';
+    return '<div class="card' + (it.stage === 'done' ? ' is-done' : '') + (isPick ? ' picking' : '') + (it.id === freshId ? ' fresh' : '') + '" data-id="' + it.id + '">' +
+      '<div class="card-main">' + check + '<div class="body">' + bodyHtml + '</div></div>' +
+      '<div class="card-foot"><button class="stage-btn ' + st.key + '" data-act="pick"><img src="' + st.img + '" alt="">' + st.label + '</button><span class="date">' + fmtDate(it.created_at) + '</span></div>' +
+      picker + '</div>';
+  }
+  function render(){
+    // フィルタ
+    const cnt = k => items.filter(x => x.stage === k).length;
+    $('chips').innerHTML = '<button class="chip' + (filter==='all'?' active':'') + '" data-f="all">すべて<span class="n">' + items.length + '</span></button>' +
+      SHOW_ORDER.map(k => { const s = stageOf(k); return '<button class="chip' + (filter===k?' active':'') + '" data-f="' + k + '">' + s.label + '<span class="n">' + cnt(k) + '</span></button>'; }).join('');
+    $('composeHint').textContent = filter === 'all' ? '「メモ」に入ります' : '「' + stageOf(filter).label + '」に入ります';
+
+    let html = '';
+    const keys = filter === 'all' ? SHOW_ORDER : [filter];
+    for (const k of keys){
+      const list = items.filter(x => x.stage === k);
+      if (filter === 'all' && !list.length) continue;
+      const s = stageOf(k);
+      const collapsed = (filter === 'all' && k === 'done' && !doneOpen);
+      if (filter === 'all'){
+        html += '<div class="sec-head"><img class="stage-ico" src="' + s.img + '" alt="">' + s.label + '<span class="n">' + list.length + '</span>' +
+          (k === 'done' ? '<button class="toggle" data-act="toggleDone">' + (doneOpen ? '閉じる' : '開く') + '</button>' : '') + '</div>';
+      }
+      if (!collapsed) html += list.map(cardHtml).join('');
+      if (k === 'done' && !collapsed && list.length) html += '<div style="text-align:right"><button class="link-btn" data-act="clearDone">済をすべて削除</button></div>';
+    }
+    if (!items.length || (filter !== 'all' && !cnt(filter))){
+      const msg = !items.length ? 'まだ何もありません。<br>思いついたことを、上に書いてみてください。' : 'ここには何もありません。';
+      html = '<div class="empty"><img src="characters/' + (filter==='all'?'memo':filter) + '.jpg" alt=""><p>' + msg + '</p></div>';
+    }
+    $('list').innerHTML = html;
+    freshId = null;
+    const ea = $('editArea'); if (ea){ autoGrow(ea); ea.focus(); ea.setSelectionRange(ea.value.length, ea.value.length); }
+  }
+  function autoGrow(ta){ ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, 400) + 'px'; }
+
+  /* ---------- イベント ---------- */
+  $('list').addEventListener('click', e => {
+    const actEl = e.target.closest('[data-act]'); if (!actEl) return;
+    const card = e.target.closest('.card'); const id = card && card.dataset.id; const act = actEl.dataset.act;
+    if (act === 'toggleDone'){ doneOpen = !doneOpen; render(); }
+    else if (act === 'clearDone') clearDone();
+    else if (act === 'check'){ const it = items.find(x => x.id === id); setStage(id, it.stage === 'done' ? 'todo' : 'done'); }
+    else if (act === 'pick'){ pickingId = (pickingId === id) ? null : id; render(); }
+    else if (act === 'stage') setStage(id, actEl.dataset.stage);
+    else if (act === 'del') removeItem(id);
+    else if (act === 'more'){ expanded.add(id); render(); }
+    else if (act === 'edit'){ editingId = id; pickingId = null; render(); }
+    else if (act === 'cancel'){ editingId = null; render(); }
+    else if (act === 'save') saveEdit(id, $('editArea').value);
+  });
+  $('list').addEventListener('input', e => { if (e.target.id === 'editArea') autoGrow(e.target); });
+  $('list').addEventListener('keydown', e => {
+    if (e.target.id !== 'editArea') return;
+    if (e.key === 'Escape'){ editingId = null; render(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
+  });
+  $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
+  $('addBtn').addEventListener('click', addItem);
+  $('newText').addEventListener('input', e => autoGrow(e.target));
+  $('newText').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); addItem(); } });
+  $('lockBtn').addEventListener('click', async () => {
+    if (!DEMO && !confirm('この端末の合言葉の記憶を消してロックします。')) return;
+    await idbDel('cryptoKeyRaw').catch(()=>{}); location.reload();
+  });
+
+  /* ---------- 同期 ---------- */
+  let resyncTimer = null;
+  function scheduleResync(){ clearTimeout(resyncTimer); resyncTimer = setTimeout(resync, 400); }
+  async function resync(){
+    if (editingId) return;
+    try { items = await loadAll(); setSync('ok','同期済み'); render(); }
+    catch(e){ console.error(e); setSync('err','同期できません'); }
+  }
+  function subscribe(){
+    sb.channel('memo_items_changes').on('postgres_changes', {event:'*', schema:'public', table:T_ITEMS}, scheduleResync)
+      .subscribe(st => { if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') setTimeout(subscribe, 3000); });
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !DEMO && masterKey) resync(); });
+
+  /* ---------- 起動 ---------- */
+  function showApp(){ $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); }
+  function showGate(mode){
+    $('app').classList.add('hidden'); $('gate').classList.remove('hidden');
+    const create = mode === 'create';
+    $('gateTitle').textContent = create ? '合言葉を決める' : '合言葉を入力';
+    $('gateDesc').innerHTML = create
+      ? 'メモはこの合言葉で暗号化されて保存されます。<br>忘れると読めなくなるので、控えておいてください。'
+      : 'この端末では初回だけ入力が必要です。';
+    $('gateInput2').classList.toggle('hidden', !create);
+    $('gateBtn').textContent = create ? '決めて始める' : '開く';
+    $('gateBtn').onclick = () => submitGate(create);
+    $('gateInput').onkeydown = $('gateInput2').onkeydown = e => { if (e.key === 'Enter') submitGate(create); };
+    $('gateInput').focus();
+  }
+  async function submitGate(create){
+    const p = $('gateInput').value, err = $('gateErr'); err.textContent = '';
+    if (p.length < 4){ err.textContent = '4文字以上で入力してください'; return; }
+    try {
+      if (create){
+        if (p !== $('gateInput2').value){ err.textContent = '2回の入力が一致しません'; return; }
+        const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
+        masterKey = await deriveKey(p, salt);
+        const e = await enc('memo-list-ok');
+        let r = await sb.from(T_META).insert({ id:'salt', value:salt, iv:'' }); if (r.error) throw r.error;
+        r = await sb.from(T_META).insert({ id:'check', value:e.body, iv:e.iv }); if (r.error) throw r.error;
+      } else {
+        const salt = (await getMeta('salt')).value;
+        const key = await deriveKey(p, salt);
+        if (!(await verifyKey(key))){ err.textContent = '合言葉が違います'; return; }
+        masterKey = key;
+      }
+      await idbSet('cryptoKeyRaw', await crypto.subtle.exportKey('raw', masterKey));
+      await start();
+    } catch(e){ console.error(e); err.textContent = '接続に失敗しました。通信とテーブルの準備を確認してください'; }
+  }
+  async function start(){
+    showApp(); setSync('', '同期中');
+    try { items = await loadAll(); setSync('ok','同期済み'); }
+    catch(e){ console.error(e); setSync('err','同期できません'); }
+    render(); if (!DEMO) subscribe();
+  }
+  async function init(){
+    if (DEMO){
+      const d = (n) => new Date(Date.now() - n*86400000).toISOString();
+      items = [
+        { id:'1', text:'確定申告の書類を揃える', stage:'todo', created_at:d(1) },
+        { id:'2', text:'ツール整理を終わらせる。\nメモ系は統合せず、それぞれ独立で磨く。', stage:'todo', created_at:d(2) },
+        { id:'3', text:'ホームページのトップを作り直したい。事務所の紹介と料金の目安、相談の流れが一目で分かるようにして、スマホでも読みやすくする。写真は使わず、文字とイラストだけで落ち着いた雰囲気にしたい。あとで参考サイトも集める。', stage:'yaritai', created_at:d(4) },
+        { id:'4', text:'マインドマップにコメントをつけたい', stage:'memo', created_at:d(0) },
+        { id:'5', text:'旧素材帳を削除', stage:'done', created_at:d(3) }
+      ];
+      return start();
+    }
+    if (!window.crypto || !crypto.subtle){ $('gate').classList.remove('hidden'); $('gateDesc').textContent = 'このブラウザでは暗号化が使えません（https で開いてください）。'; return; }
+    try {
+      const salt = await getMeta('salt');
+      if (!salt) return showGate('create');
+      const raw = await idbGet('cryptoKeyRaw').catch(() => null);
+      if (raw){
+        const key = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, true, ['encrypt','decrypt']);
+        if (await verifyKey(key)){ masterKey = key; return start(); }
+      }
+      showGate('unlock');
+    } catch(e){
+      console.error(e);
+      $('gate').classList.remove('hidden');
+      $('gateInput').classList.add('hidden'); $('gateBtn').classList.add('hidden');
+      $('gateTitle').textContent = '接続できません';
+      $('gateDesc').textContent = 'テーブルが未作成か、通信できていません。supabase/schema.sql を実行したか確認してください。';
+    }
+  }
+  init();
+
+  if ('serviceWorker' in navigator && !DEMO) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+})();
+</script>
+</body>
+</html>
