@@ -239,6 +239,11 @@
   const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
   // URLをリンク化（生テキストでURLを検出 → 各部分を個別にエスケープ）
   const URL_RE = /https?:\/\/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+/g;
+  // 表示用に短縮（スキーム・www除去、25文字超は…で省略。リンク先は元URLのまま）
+  function shortUrl(u){
+    const s = u.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+    return s.length > 25 ? s.slice(0, 25) + '…' : s;
+  }
   function linkify(raw){
     let out = '', last = 0;
     raw.replace(URL_RE, (m, idx) => {
@@ -247,7 +252,7 @@
       while (/[.,!?:;'"]$/.test(url) || (url.endsWith(')') && (url.match(/\(/g)||[]).length < (url.match(/\)/g)||[]).length)){
         url = url.slice(0, -1);
       }
-      out += esc(raw.slice(last, idx)) + '<a href="' + esc(url).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>';
+      out += esc(raw.slice(last, idx)) + '<a href="' + esc(url).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">' + esc(shortUrl(url)) + '</a>';
       last = idx + url.length;
       return m;
     });
