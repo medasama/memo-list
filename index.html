@@ -112,6 +112,8 @@
     white-space:pre-wrap; word-break:break-word; font-size:16.5px; line-height:1.75;
     cursor:text; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:7; overflow:hidden;
   }
+  .text a{color:var(--accent); text-decoration:underline; text-underline-offset:2px; overflow-wrap:anywhere; word-break:break-all;}
+  .card.is-done .text a{color:var(--faint);}
   .card.is-done .text{color:var(--faint); text-decoration:line-through; text-decoration-color:var(--line);}
   .more{font-size:13px; color:var(--accent); margin-top:2px; border:none; background:none; padding:0; cursor:pointer;}
   .edit-area{
@@ -235,6 +237,22 @@
 
   const $ = id => document.getElementById(id);
   const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+  // URLをリンク化（生テキストでURLを検出 → 各部分を個別にエスケープ）
+  const URL_RE = /https?:\/\/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+/g;
+  function linkify(raw){
+    let out = '', last = 0;
+    raw.replace(URL_RE, (m, idx) => {
+      let url = m;
+      // 末尾の句読点・対応のない閉じ括弧はリンクに含めない
+      while (/[.,!?:;'"]$/.test(url) || (url.endsWith(')') && (url.match(/\(/g)||[]).length < (url.match(/\)/g)||[]).length)){
+        url = url.slice(0, -1);
+      }
+      out += esc(raw.slice(last, idx)) + '<a href="' + esc(url).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>';
+      last = idx + url.length;
+      return m;
+    });
+    return out + esc(raw.slice(last));
+  }
   function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1600); }
   function setSync(state, text){ $('syncDot').className = 'dot ' + state; $('syncText').textContent = text; }
   function fmtDate(iso){ const d = new Date(iso); return (d.getMonth()+1) + '/' + d.getDate(); }
@@ -356,7 +374,7 @@
       ? '<button class="check" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
     const bodyHtml = isEdit
       ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="edit-actions"><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
-      : '<div class="text" data-act="edit" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + esc(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '');
+      : '<div class="text" data-act="edit" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '');
     const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
       '<button class="pick' + (s.key === it.stage ? ' cur' : '') + '" data-act="stage" data-stage="' + s.key + '"><img src="' + s.img + '" alt="">' + s.label + '</button>').join('') +
       '</div><div class="picker-foot"><button class="del" data-act="del">削除</button></div></div>';
@@ -398,6 +416,7 @@
 
   /* ---------- イベント ---------- */
   $('list').addEventListener('click', e => {
+    if (e.target.closest('.text a')) return; // リンクは編集モードに入らずそのまま開く
     const actEl = e.target.closest('[data-act]'); if (!actEl) return;
     const card = e.target.closest('.card'); const id = card && card.dataset.id; const act = actEl.dataset.act;
     if (act === 'toggleDone'){ doneOpen = !doneOpen; render(); }
