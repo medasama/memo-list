@@ -104,6 +104,8 @@
     border:2px solid var(--s-todo); background:transparent; cursor:pointer; padding:0;
     display:flex; align-items:center; justify-content:center;
   }
+  .check.y{border-color:var(--s-yaritai);}
+  .card.is-done .check.y{border-color:var(--s-done);}
   .check svg{width:14px; height:14px; display:none;}
   .card.is-done .check{background:var(--s-done); border-color:var(--s-done);}
   .card.is-done .check svg{display:block;}
@@ -158,9 +160,24 @@
   .img-btn{border:1px solid var(--line); background:transparent; color:var(--soft); font-size:13px; padding:6px 12px; border-radius:999px; cursor:pointer;}
   .compose-actions{display:flex; align-items:center; gap:8px;}
   .text:empty{min-height:12px;}
+  .body{cursor:text;}
   .lightbox{position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.88); display:flex; align-items:center; justify-content:center; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); overflow:auto;}
   .lightbox img{max-width:100%; max-height:100%; object-fit:contain; touch-action:pinch-zoom;}
   .lightbox .x{position:fixed; top:calc(env(safe-area-inset-top) + 10px); right:14px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(255,255,255,.2); color:#fff; font-size:22px; cursor:pointer;}
+
+  /* 削除（スワイプ / ゴミ箱） */
+  .cw{position:relative; margin:0 0 8px;}
+  .cw .card{margin:0; touch-action:pan-y; transition:opacity .2s, transform .2s;}
+  .cw .card.dragging{transition:none;}
+  .cw .card.swiped{transform:translateX(-88px);}
+  .swdel{position:absolute; right:0; top:0; bottom:0; width:88px; border:none; border-radius:14px; background:var(--danger); color:#fff; font-size:14px; font-weight:600; cursor:pointer;}
+  .trash-ico{border:none; background:none; font-size:15px; cursor:pointer; padding:2px 4px; opacity:.45; display:none;}
+  .trash-ico:hover{opacity:1;}
+  @media (hover:hover) and (pointer:fine){ .trash-ico{display:inline-block;} .swdel{display:none;} }
+  .trash-ask{border:none; background:var(--danger); color:#fff; font-size:12.5px; font-weight:600; border-radius:999px; padding:3px 12px; cursor:pointer;}
+  .trash-actions{display:flex; gap:8px; margin-top:8px; align-items:center;}
+  .trash-actions .btn-sm.danger{color:var(--danger); border-color:var(--danger);}
+  .card.in-trash .text{color:var(--soft);}
 
   .empty{text-align:center; color:var(--soft); padding:34px 20px 20px;}
   .empty img{width:120px; height:120px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply; margin-bottom:6px;}
@@ -253,6 +270,7 @@
   const expanded = new Set();
   let doneOpen = false;
   let freshId = null;
+  let delAskId = null;   // PC: 「削除しますか？」表示中のカード
   let newImgs = [];      // 追加前の画像（dataURL）
   let editImgs = null;   // 編集中の画像
   const MAX_IMGS = 4;
@@ -358,7 +376,7 @@
     if (error) throw error;
     const out = [];
     for (const r of data){
-      try { const u = unpack(await dec(r.body, r.iv)); out.push({ id:r.id, text:u.text, images:u.images, stage:r.stage, created_at:r.created_at }); }
+      try { const u = unpack(await dec(r.body, r.iv)); out.push({ id:r.id, text:u.text, images:u.images, ...decStage(r.stage), created_at:r.created_at }); }
       catch(e){ console.warn('復号できない行をスキップ', r.id); }
     }
     return out;
@@ -366,7 +384,7 @@
   async function dbInsert(it){
     if (DEMO) return;
     const e = await enc(pack(it.text, it.images));
-    const { error } = await sb.from(T_ITEMS).insert({ id:it.id, body:e.body, iv:e.iv, stage:it.stage, created_at:it.created_at });
+    const { error } = await sb.from(T_ITEMS).insert({ id:it.id, body:e.body, iv:e.iv, stage:encStage(it), created_at:it.created_at });
     if (error) throw error;
   }
   async function dbUpdate(id, patch){
@@ -382,6 +400,16 @@
     const { error } = await sb.from(T_ITEMS).delete().in('id', ids);
     if (error) throw error;
   }
+  // 済にした時の元カテゴリ・ゴミ箱に入れる前の状態も stage 列に保存（例: done:yaritai / trash:done.yaritai）
+  const encStage = it => {
+    if (it.stage === 'trash'){ const pv = it.prev || {}; return 'trash:' + (pv.stage || 'memo') + (pv.from ? '.' + pv.from : ''); }
+    return (it.stage === 'done' && it.from) ? 'done:' + it.from : it.stage;
+  };
+  const decStage = str => {
+    const [a, b] = str.split(':');
+    if (a === 'trash'){ const [ps, pf] = (b || 'memo').split('.'); return { stage:'trash', from:null, prev:{ stage:ps, from:pf || null } }; }
+    return { stage:a, from:b || null };
+  };
   const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:(r&3|8)).toString(16); }));
   async function guarded(fn){
     try { await fn(); setSync('ok','同期済み'); }
@@ -392,7 +420,7 @@
   function addItem(){
     const ta = $('newText'); const text = ta.value.trim();
     if (!text && !newImgs.length) return;
-    const stage = (filter !== 'all') ? filter : 'memo';
+    const stage = (filter !== 'all' && filter !== 'trash') ? filter : 'memo';
     const it = { id:uuid(), text, images:newImgs, stage, created_at:new Date().toISOString() };
     items.unshift(it); freshId = it.id;
     newImgs = []; renderNewImgs();
@@ -403,7 +431,7 @@
     const it = items.find(x => x.id === id); if (!it || it.stage === stage) return;
     const el = document.querySelector('[data-id="' + id + '"]');
     pickingId = null;
-    const apply = () => { it.stage = stage; render(); guarded(() => dbUpdate(id, {stage})); };
+    const apply = () => { it.from = (stage === 'done') ? it.stage : null; it.stage = stage; render(); guarded(() => dbUpdate(id, {stage:encStage(it)})); };
     if (el){ el.classList.add('leaving'); setTimeout(apply, 180); } else apply();
   }
   function saveEdit(id, text){
@@ -414,47 +442,70 @@
     if (changed && (text || imgs.length)){ it.text = text; it.images = imgs; guarded(() => dbUpdate(id, {text, images:imgs})); }
     render();
   }
-  function removeItem(id){
-    if (!confirm('このメモを削除しますか？')) return;
-    items = items.filter(x => x.id !== id); pickingId = null; render();
-    guarded(() => dbDelete([id]));
+  function trashItem(id){
+    const it = items.find(x => x.id === id); if (!it || it.stage === 'trash') return;
+    const el = document.querySelector('[data-id="' + id + '"]');
+    pickingId = null; delAskId = null; editingId = null;
+    const apply = () => { it.prev = { stage:it.stage, from:it.from || null }; it.stage = 'trash'; it.from = null; render(); guarded(() => dbUpdate(id, {stage:encStage(it)})); toast('ゴミ箱に入れました'); };
+    if (el){ el.classList.add('leaving'); setTimeout(apply, 180); } else apply();
+  }
+  function restoreItem(id){
+    const it = items.find(x => x.id === id); if (!it) return;
+    const pv = it.prev || {}; it.stage = pv.stage || 'memo'; it.from = pv.from || null; it.prev = null;
+    render(); guarded(() => dbUpdate(id, {stage:encStage(it)})); toast('元に戻しました');
+  }
+  function purge(ids, msg){
+    if (!ids.length || !confirm(msg)) return;
+    items = items.filter(x => !ids.includes(x.id)); render();
+    guarded(() => dbDelete(ids));
   }
   function clearDone(){
     const ids = items.filter(x => x.stage === 'done').map(x => x.id);
-    if (!ids.length || !confirm('済のメモ ' + ids.length + ' 件をすべて削除しますか？')) return;
-    items = items.filter(x => x.stage !== 'done'); render();
-    guarded(() => dbDelete(ids));
+    if (!ids.length || !confirm('済のメモ ' + ids.length + ' 件をゴミ箱に入れますか？')) return;
+    ids.forEach(id => { const it = items.find(x => x.id === id); it.prev = { stage:'done', from:it.from || null }; it.stage = 'trash'; it.from = null; guarded(() => dbUpdate(id, {stage:encStage(it)})); });
+    render();
   }
 
   /* ---------- 描画 ---------- */
   function cardHtml(it){
-    const st = stageOf(it.stage);
+    const st = stageOf(it.stage === 'done' && it.from ? it.from : it.stage);
     const isEdit = editingId === it.id, isPick = pickingId === it.id;
     const long = it.text.length > 140 || it.text.split('\n').length > 6;
     const open = expanded.has(it.id);
-    const check = (it.stage === 'todo' || it.stage === 'done')
-      ? '<button class="check" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
+    const check = (it.stage === 'todo' || it.stage === 'yaritai' || it.stage === 'done')
+      ? '<button class="check ' + (it.stage === 'yaritai' || it.from === 'yaritai' ? 'y' : '') + '" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
     const bodyHtml = isEdit
       ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions"><button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
-      : '<div class="text" data-act="edit" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '') +
+      : '<div class="text" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '') +
         ((it.images && it.images.length) ? '<div class="imgs">' + thumbsHtml(it.images, false) + '</div>' : '');
     const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
       '<button class="pick' + (s.key === it.stage ? ' cur' : '') + '" data-act="stage" data-stage="' + s.key + '"><img src="' + s.img + '" alt="">' + s.label + '</button>').join('') +
-      '</div><div class="picker-foot"><button class="del" data-act="del">削除</button></div></div>';
-    return '<div class="card' + (it.stage === 'done' ? ' is-done' : '') + (isPick ? ' picking' : '') + (it.id === freshId ? ' fresh' : '') + '" data-id="' + it.id + '">' +
-      '<div class="card-main">' + check + '<div class="body">' + bodyHtml + '</div></div>' +
-      '<div class="card-foot"><button class="stage-btn ' + st.key + '" data-act="pick"><img src="' + st.img + '" alt="">' + st.label + '</button><span class="date">' + fmtDate(it.created_at) + '</span></div>' +
-      picker + '</div>';
+      '</div><div class="picker-foot"><button class="del" data-act="trash">ゴミ箱へ</button></div></div>';
+    if (it.stage === 'trash'){
+      return '<div class="cw"><div class="card in-trash" data-id="' + it.id + '"><div class="card-main"><div class="body"><div class="text" style="-webkit-line-clamp:4;">' + linkify(it.text) + '</div>' +
+        ((it.images && it.images.length) ? '<div class="imgs">' + thumbsHtml(it.images, false) + '</div>' : '') + '</div></div>' +
+        '<div class="trash-actions"><button class="btn-sm primary" data-act="restore">元に戻す</button><button class="btn-sm danger" data-act="purge">完全に削除</button><span class="date">' + fmtDate(it.created_at) + '</span></div></div></div>';
+    }
+    const trashBtn = delAskId === it.id
+      ? '<button class="trash-ask" data-act="trash">削除しますか？</button>'
+      : '<button class="trash-ico" data-act="askdel" aria-label="ゴミ箱へ">🗑</button>';
+    return '<div class="cw"><button class="swdel" data-act="trash">削除</button><div class="card' + (it.stage === 'done' ? ' is-done' : '') + (isPick ? ' picking' : '') + (it.id === freshId ? ' fresh' : '') + '" data-id="' + it.id + '">' +
+      '<div class="card-main">' + check + '<div class="body"' + (isEdit ? '' : ' data-act="edit"') + '>' + bodyHtml + '</div></div>' +
+      '<div class="card-foot"><button class="stage-btn ' + st.key + '" data-act="pick"><img src="' + st.img + '" alt="">' + st.label + '</button><span class="date">' + fmtDate(it.created_at) + '</span>' + trashBtn + '</div>' +
+      picker + '</div></div>';
   }
   function render(){
     // フィルタ
     const cnt = k => items.filter(x => x.stage === k).length;
-    $('chips').innerHTML = '<button class="chip' + (filter==='all'?' active':'') + '" data-f="all">すべて<span class="n">' + items.length + '</span></button>' +
-      SHOW_ORDER.map(k => { const s = stageOf(k); return '<button class="chip' + (filter===k?' active':'') + '" data-f="' + k + '">' + s.label + '<span class="n">' + cnt(k) + '</span></button>'; }).join('');
-    $('composeHint').textContent = filter === 'all' ? '「メモ」に入ります' : '「' + stageOf(filter).label + '」に入ります';
+    const live = items.filter(x => x.stage !== 'trash');
+    $('chips').innerHTML = '<button class="chip' + (filter==='all'?' active':'') + '" data-f="all">すべて<span class="n">' + live.length + '</span></button>' +
+      SHOW_ORDER.map(k => { const s = stageOf(k); return '<button class="chip' + (filter===k?' active':'') + '" data-f="' + k + '">' + s.label + '<span class="n">' + cnt(k) + '</span></button>'; }).join('') +
+      (cnt('trash') || filter === 'trash' ? '<button class="chip' + (filter==='trash'?' active':'') + '" data-f="trash">🗑 ゴミ箱<span class="n">' + cnt('trash') + '</span></button>' : '');
+    $('composeHint').textContent = (filter === 'all' || filter === 'trash') ? '「メモ」に入ります' : '「' + stageOf(filter).label + '」に入ります';
 
     let html = '';
     const keys = filter === 'all' ? SHOW_ORDER : [filter];
+    if (filter === 'trash' && cnt('trash')) html += '<div style="text-align:right"><button class="link-btn" data-act="emptyTrash">ゴミ箱を空にする</button></div>';
     for (const k of keys){
       const list = items.filter(x => x.stage === k);
       if (filter === 'all' && !list.length) continue;
@@ -467,9 +518,9 @@
       if (!collapsed) html += list.map(cardHtml).join('');
       if (k === 'done' && !collapsed && list.length) html += '<div style="text-align:right"><button class="link-btn" data-act="clearDone">済をすべて削除</button></div>';
     }
-    if (!items.length || (filter !== 'all' && !cnt(filter))){
-      const msg = !items.length ? 'まだ何もありません。<br>思いついたことを、上に書いてみてください。' : 'ここには何もありません。';
-      html = '<div class="empty"><img src="characters/' + (filter==='all'?'memo':filter) + '.jpg" alt=""><p>' + msg + '</p></div>';
+    if (!live.length && filter !== 'trash' || (filter !== 'all' && !cnt(filter))){
+      const msg = filter === 'trash' ? 'ゴミ箱は空です。' : !live.length ? 'まだ何もありません。<br>思いついたことを、上に書いてみてください。' : 'ここには何もありません。';
+      html = '<div class="empty"><img src="characters/' + ((filter==='all'||filter==='trash')?'memo':filter) + '.jpg" alt=""><p>' + msg + '</p></div>';
     }
     $('list').innerHTML = html;
     freshId = null;
@@ -482,6 +533,10 @@
     if (e.target.closest('.text a')) return; // リンクは編集モードに入らずそのまま開く
     const actEl = e.target.closest('[data-act]'); if (!actEl) return;
     const card = e.target.closest('.card'); const id = card && card.dataset.id; const act = actEl.dataset.act;
+    if (Date.now() - swipeAt < 400) return;                       // スワイプ直後のクリックは無視
+    if (act === 'trash' && !card){ const cw = e.target.closest('.cw'); trashItem(cw.querySelector('.card').dataset.id); return; }
+    if (card && card.classList.contains('swiped')){ card.classList.remove('swiped'); return; } // 開いたカードはタップで閉じる
+    if (act !== 'trash' && delAskId){ delAskId = null; render(); }
     if (act === 'zoom'){
       const imgs = (editImgs && editingId === id) ? editImgs : ((items.find(x => x.id === id) || {}).images || []);
       zoom(imgs[+actEl.dataset.i]);
@@ -490,14 +545,43 @@
     else if (act === 'addimg'){ $('fileIn').dataset.target = 'edit'; $('fileIn').click(); }
     else if (act === 'toggleDone'){ doneOpen = !doneOpen; render(); }
     else if (act === 'clearDone') clearDone();
-    else if (act === 'check'){ const it = items.find(x => x.id === id); setStage(id, it.stage === 'done' ? 'todo' : 'done'); }
+    else if (act === 'check'){ const it = items.find(x => x.id === id); setStage(id, it.stage === 'done' ? (it.from || 'todo') : 'done'); }
     else if (act === 'pick'){ pickingId = (pickingId === id) ? null : id; render(); }
     else if (act === 'stage') setStage(id, actEl.dataset.stage);
-    else if (act === 'del') removeItem(id);
+    else if (act === 'trash') trashItem(id);
+    else if (act === 'askdel'){ delAskId = id; render(); }
+    else if (act === 'restore') restoreItem(id);
+    else if (act === 'purge') purge([id], 'このメモを完全に削除しますか？元に戻せません。');
+    else if (act === 'emptyTrash') purge(items.filter(x => x.stage === 'trash').map(x => x.id), 'ゴミ箱のメモをすべて完全に削除しますか？元に戻せません。');
     else if (act === 'more'){ expanded.add(id); render(); }
     else if (act === 'edit'){ editingId = id; editImgs = [...((items.find(x => x.id === id) || {}).images || [])]; pickingId = null; render(); }
     else if (act === 'cancel'){ editingId = null; editImgs = null; render(); }
     else if (act === 'save') saveEdit(id, $('editArea').value);
+  });
+  /* 左スワイプで「削除」を表示 */
+  let swipeAt = 0, sw = null;
+  const closeSwipes = except => document.querySelectorAll('.card.swiped').forEach(c => { if (c !== except) c.classList.remove('swiped'); });
+  $('list').addEventListener('touchstart', e => {
+    const card = e.target.closest('.card');
+    closeSwipes(card);
+    if (!card || card.classList.contains('in-trash') || card.classList.contains('picking') || editingId || e.touches.length !== 1){ sw = null; return; }
+    sw = { card, x:e.touches[0].clientX, y:e.touches[0].clientY, dx:0, lock:null, base:card.classList.contains('swiped') ? -88 : 0 };
+  }, {passive:true});
+  $('list').addEventListener('touchmove', e => {
+    if (!sw) return;
+    const dx = e.touches[0].clientX - sw.x, dy = e.touches[0].clientY - sw.y;
+    if (!sw.lock){ if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; sw.lock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'; if (sw.lock === 'h') sw.card.classList.add('dragging'); }
+    if (sw.lock !== 'h') return;
+    sw.dx = dx;
+    sw.card.style.transform = 'translateX(' + Math.max(-88, Math.min(0, sw.base + dx)) + 'px)';
+  }, {passive:true});
+  $('list').addEventListener('touchend', () => {
+    if (!sw) return;
+    const { card, lock, base, dx } = sw; sw = null;
+    card.classList.remove('dragging'); card.style.transform = '';
+    if (lock !== 'h') return;
+    swipeAt = Date.now();
+    card.classList.toggle('swiped', base + dx < -44);
   });
   $('list').addEventListener('input', e => { if (e.target.id === 'editArea') autoGrow(e.target); });
   $('list').addEventListener('keydown', e => {
