@@ -149,6 +149,19 @@
   .picker-foot{display:flex; justify-content:space-between; margin-top:8px;}
   .del{border:none; background:none; color:var(--danger); font-size:13px; cursor:pointer; padding:4px 0;}
 
+  /* 画像 */
+  .imgs{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
+  .imgs:empty{display:none;}
+  .imgs .im{position:relative; width:84px; height:84px; border-radius:10px; overflow:hidden; border:1px solid var(--line); background:#eee; flex:0 0 auto;}
+  .imgs .im img{width:100%; height:100%; object-fit:cover; display:block; cursor:zoom-in;}
+  .imgs .im .rm{position:absolute; top:3px; right:3px; width:22px; height:22px; border-radius:50%; border:none; background:rgba(0,0,0,.6); color:#fff; font-size:14px; line-height:1; cursor:pointer; padding:0;}
+  .img-btn{border:1px solid var(--line); background:transparent; color:var(--soft); font-size:13px; padding:6px 12px; border-radius:999px; cursor:pointer;}
+  .compose-actions{display:flex; align-items:center; gap:8px;}
+  .text:empty{min-height:12px;}
+  .lightbox{position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.88); display:flex; align-items:center; justify-content:center; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); overflow:auto;}
+  .lightbox img{max-width:100%; max-height:100%; object-fit:contain; touch-action:pinch-zoom;}
+  .lightbox .x{position:fixed; top:calc(env(safe-area-inset-top) + 10px); right:14px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(255,255,255,.2); color:#fff; font-size:22px; cursor:pointer;}
+
   .empty{text-align:center; color:var(--soft); padding:34px 20px 20px;}
   .empty img{width:120px; height:120px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply; margin-bottom:6px;}
   .empty p{margin:0; font-size:15px;}
@@ -197,16 +210,22 @@
   <div class="wrap">
     <div class="compose">
       <textarea id="newText" rows="2" placeholder="思いついたことを書く"></textarea>
+      <div class="imgs" id="newImgs"></div>
       <div class="compose-foot">
-        <span class="compose-hint" id="composeHint"></span>
+        <div class="compose-actions">
+          <button class="img-btn" id="imgBtn" type="button">📷 画像</button>
+          <span class="compose-hint" id="composeHint"></span>
+        </div>
         <button class="btn-add" id="addBtn">追加</button>
       </div>
+      <input type="file" id="fileIn" accept="image/*" multiple class="hidden">
     </div>
     <div class="chips" id="chips"></div>
     <div id="list"></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="lightbox hidden" id="lightbox"><button class="x" aria-label="閉じる">×</button><img alt=""></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -234,6 +253,9 @@
   const expanded = new Set();
   let doneOpen = false;
   let freshId = null;
+  let newImgs = [];      // 追加前の画像（dataURL）
+  let editImgs = null;   // 編集中の画像
+  const MAX_IMGS = 4;
 
   const $ = id => document.getElementById(id);
   const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
@@ -261,6 +283,38 @@
   function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1600); }
   function setSync(state, text){ $('syncDot').className = 'dot ' + state; $('syncText').textContent = text; }
   function fmtDate(iso){ const d = new Date(iso); return (d.getMonth()+1) + '/' + d.getDate(); }
+
+  /* ---------- 画像（縮小・JPEG変換して本文と一緒に暗号化保存） ---------- */
+  // 画像なし＝従来どおり平文テキストのまま。画像あり＝先頭に \u0000 を付けたJSON
+  const pack = (text, imgs) => (imgs && imgs.length) ? '\u0000' + JSON.stringify({ t:text, i:imgs }) : text;
+  const unpack = raw => {
+    if (raw.charCodeAt(0) === 0){ try { const o = JSON.parse(raw.slice(1)); return { text:o.t || '', images:o.i || [] }; } catch(e){} }
+    return { text:raw, images:[] };
+  };
+  function compressImage(file){
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), im = new Image();
+      im.onload = () => {
+        const MAX = 1400, k = Math.min(1, MAX / Math.max(im.width, im.height));
+        const c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.72));
+      };
+      im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('画像を読めません')); };
+      im.src = url;
+    });
+  }
+  async function addFiles(files, list){
+    const fs = [...files].filter(f => f.type.startsWith('image/'));
+    for (const f of fs){
+      if (list.length >= MAX_IMGS){ toast('画像は1件につき' + MAX_IMGS + '枚までです'); break; }
+      try { list.push(await compressImage(f)); } catch(e){ toast('画像を読めませんでした'); }
+    }
+  }
+  const thumbsHtml = (list, removable) => list.map((src, i) =>
+    '<div class="im"><img src="' + src + '" data-act="zoom" data-i="' + i + '" alt="">' + (removable ? '<button class="rm" data-act="rmimg" data-i="' + i + '" type="button" aria-label="画像を外す">×</button>' : '') + '</div>').join('');
+  function renderNewImgs(){ $('newImgs').innerHTML = thumbsHtml(newImgs, true); }
+  function zoom(src){ const lb = $('lightbox'); lb.querySelector('img').src = src; lb.classList.remove('hidden'); }
 
   /* ---------- 暗号化（合言葉 → AES-GCM） ---------- */
   const b64 = bytes => { let s=''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s); };
@@ -304,14 +358,14 @@
     if (error) throw error;
     const out = [];
     for (const r of data){
-      try { out.push({ id:r.id, text:await dec(r.body, r.iv), stage:r.stage, created_at:r.created_at }); }
+      try { const u = unpack(await dec(r.body, r.iv)); out.push({ id:r.id, text:u.text, images:u.images, stage:r.stage, created_at:r.created_at }); }
       catch(e){ console.warn('復号できない行をスキップ', r.id); }
     }
     return out;
   }
   async function dbInsert(it){
     if (DEMO) return;
-    const e = await enc(it.text);
+    const e = await enc(pack(it.text, it.images));
     const { error } = await sb.from(T_ITEMS).insert({ id:it.id, body:e.body, iv:e.iv, stage:it.stage, created_at:it.created_at });
     if (error) throw error;
   }
@@ -319,7 +373,7 @@
     if (DEMO) return;
     const row = { updated_at:new Date().toISOString() };
     if (patch.stage) row.stage = patch.stage;
-    if (patch.text !== undefined){ const e = await enc(patch.text); row.body = e.body; row.iv = e.iv; }
+    if (patch.text !== undefined){ const e = await enc(pack(patch.text, patch.images)); row.body = e.body; row.iv = e.iv; }
     const { error } = await sb.from(T_ITEMS).update(row).eq('id', id);
     if (error) throw error;
   }
@@ -337,10 +391,11 @@
   /* ---------- 操作 ---------- */
   function addItem(){
     const ta = $('newText'); const text = ta.value.trim();
-    if (!text) return;
+    if (!text && !newImgs.length) return;
     const stage = (filter !== 'all') ? filter : 'memo';
-    const it = { id:uuid(), text, stage, created_at:new Date().toISOString() };
+    const it = { id:uuid(), text, images:newImgs, stage, created_at:new Date().toISOString() };
     items.unshift(it); freshId = it.id;
+    newImgs = []; renderNewImgs();
     ta.value = ''; autoGrow(ta); render();
     guarded(() => dbInsert(it));
   }
@@ -354,7 +409,9 @@
   function saveEdit(id, text){
     const it = items.find(x => x.id === id); editingId = null;
     text = text.trim();
-    if (it && text && text !== it.text){ it.text = text; guarded(() => dbUpdate(id, {text})); }
+    const imgs = editImgs || (it && it.images) || []; editImgs = null;
+    const changed = it && (text !== it.text || JSON.stringify(imgs) !== JSON.stringify(it.images || []));
+    if (changed && (text || imgs.length)){ it.text = text; it.images = imgs; guarded(() => dbUpdate(id, {text, images:imgs})); }
     render();
   }
   function removeItem(id){
@@ -378,8 +435,9 @@
     const check = (it.stage === 'todo' || it.stage === 'done')
       ? '<button class="check" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
     const bodyHtml = isEdit
-      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="edit-actions"><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
-      : '<div class="text" data-act="edit" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '');
+      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions"><button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
+      : '<div class="text" data-act="edit" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '') +
+        ((it.images && it.images.length) ? '<div class="imgs">' + thumbsHtml(it.images, false) + '</div>' : '');
     const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
       '<button class="pick' + (s.key === it.stage ? ' cur' : '') + '" data-act="stage" data-stage="' + s.key + '"><img src="' + s.img + '" alt="">' + s.label + '</button>').join('') +
       '</div><div class="picker-foot"><button class="del" data-act="del">削除</button></div></div>';
@@ -424,25 +482,51 @@
     if (e.target.closest('.text a')) return; // リンクは編集モードに入らずそのまま開く
     const actEl = e.target.closest('[data-act]'); if (!actEl) return;
     const card = e.target.closest('.card'); const id = card && card.dataset.id; const act = actEl.dataset.act;
-    if (act === 'toggleDone'){ doneOpen = !doneOpen; render(); }
+    if (act === 'zoom'){
+      const imgs = (editImgs && editingId === id) ? editImgs : ((items.find(x => x.id === id) || {}).images || []);
+      zoom(imgs[+actEl.dataset.i]);
+    }
+    else if (act === 'rmimg'){ editImgs.splice(+actEl.dataset.i, 1); const t = $('editArea').value; render(); $('editArea').value = t; autoGrow($('editArea')); }
+    else if (act === 'addimg'){ $('fileIn').dataset.target = 'edit'; $('fileIn').click(); }
+    else if (act === 'toggleDone'){ doneOpen = !doneOpen; render(); }
     else if (act === 'clearDone') clearDone();
     else if (act === 'check'){ const it = items.find(x => x.id === id); setStage(id, it.stage === 'done' ? 'todo' : 'done'); }
     else if (act === 'pick'){ pickingId = (pickingId === id) ? null : id; render(); }
     else if (act === 'stage') setStage(id, actEl.dataset.stage);
     else if (act === 'del') removeItem(id);
     else if (act === 'more'){ expanded.add(id); render(); }
-    else if (act === 'edit'){ editingId = id; pickingId = null; render(); }
-    else if (act === 'cancel'){ editingId = null; render(); }
+    else if (act === 'edit'){ editingId = id; editImgs = [...((items.find(x => x.id === id) || {}).images || [])]; pickingId = null; render(); }
+    else if (act === 'cancel'){ editingId = null; editImgs = null; render(); }
     else if (act === 'save') saveEdit(id, $('editArea').value);
   });
   $('list').addEventListener('input', e => { if (e.target.id === 'editArea') autoGrow(e.target); });
   $('list').addEventListener('keydown', e => {
     if (e.target.id !== 'editArea') return;
-    if (e.key === 'Escape'){ editingId = null; render(); }
+    if (e.key === 'Escape'){ editingId = null; editImgs = null; render(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
   });
   $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
   $('addBtn').addEventListener('click', addItem);
+  $('imgBtn').addEventListener('click', () => { $('fileIn').dataset.target = 'new'; $('fileIn').click(); });
+  $('fileIn').addEventListener('change', async e => {
+    const files = e.target.files, edit = e.target.dataset.target === 'edit';
+    if (edit && editImgs){
+      const ta = $('editArea'), t = ta ? ta.value : '';
+      await addFiles(files, editImgs); render(); const ea = $('editArea'); if (ea){ ea.value = t; autoGrow(ea); }
+    } else { await addFiles(files, newImgs); renderNewImgs(); }
+    e.target.value = '';
+  });
+  $('newText').addEventListener('paste', async e => {
+    const fs = [...(e.clipboardData ? e.clipboardData.files : [])].filter(f => f.type.startsWith('image/'));
+    if (fs.length){ e.preventDefault(); await addFiles(fs, newImgs); renderNewImgs(); }
+  });
+  $('newImgs').addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    if (b.dataset.act === 'rmimg'){ newImgs.splice(+b.dataset.i, 1); renderNewImgs(); }
+    else if (b.dataset.act === 'zoom') zoom(newImgs[+b.dataset.i]);
+  });
+  $('lightbox').addEventListener('click', () => $('lightbox').classList.add('hidden'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('lightbox').classList.add('hidden'); });
   $('newText').addEventListener('input', e => autoGrow(e.target));
   $('newText').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); addItem(); } });
   $('lockBtn').addEventListener('click', async () => {
