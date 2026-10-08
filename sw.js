@@ -1,4 +1,4 @@
-const CACHE_NAME = 'memo-list-v4';
+const CACHE_NAME = 'memo-list-v5';
 const STATIC_ASSETS = [
   './manifest.json',
   './icons/icon-192.png',

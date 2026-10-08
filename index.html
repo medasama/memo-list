@@ -44,6 +44,11 @@
     padding:calc(env(safe-area-inset-top) + 14px) 18px 6px;
   }
   header h1{margin:0; font-size:20px; font-weight:700; letter-spacing:.04em;}
+  .title-wrap{position:relative; display:flex; align-items:center; gap:6px;}
+  .hub-btn{border:1px solid var(--line); background:var(--card); border-radius:999px; width:30px; height:30px; font-size:14px; cursor:pointer; padding:0; line-height:1;}
+  .hub-menu{position:absolute; top:36px; left:0; z-index:20; min-width:190px; background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:0 6px 20px rgba(0,0,0,.12); padding:6px;}
+  .hub-menu a{display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; color:var(--ink); text-decoration:none; font-size:15px;}
+  .hub-menu a:active, .hub-menu a:hover{background:var(--bg);}
   .head-right{display:flex; align-items:center; gap:12px; font-size:12.5px; color:var(--faint);}
   .dot{width:8px; height:8px; border-radius:50%; background:var(--faint); display:inline-block; margin-right:5px;}
   .dot.ok{background:#6aa77a;}
@@ -218,7 +223,16 @@
 
 <div id="app" class="hidden">
   <header>
-    <h1>メモ帳</h1>
+    <div class="title-wrap">
+      <h1>メモ帳</h1>
+      <button class="hub-btn" id="hubBtn" aria-label="ほかのツール">🔗</button>
+      <div class="hub-menu hidden" id="hubMenu">
+        <a href="https://diary-bay-nine.vercel.app/" target="_blank" rel="noopener noreferrer"><span>📔</span>diary</a>
+        <a href="https://shopping-list-h9vx.vercel.app/index.html" target="_blank" rel="noopener noreferrer"><span>🛒</span>shopping-list</a>
+        <a href="https://minatokanko-bus125-timetable.vercel.app/" target="_blank" rel="noopener noreferrer"><span>🚌</span>バスの時刻</a>
+        <a href="https://rakuten-spu-tracker.vercel.app/" target="_blank" rel="noopener noreferrer"><span>🛍</span>楽天</a>
+      </div>
+    </div>
     <div class="head-right">
       <span><span class="dot" id="syncDot"></span><span id="syncText">同期中</span></span>
       <button class="link-btn" id="lockBtn">ロック</button>
@@ -590,6 +604,8 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
   });
   $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
+  $('hubBtn').addEventListener('click', e => { e.stopPropagation(); $('hubMenu').classList.toggle('hidden'); });
+  document.addEventListener('click', e => { if (!e.target.closest('#hubMenu')) $('hubMenu').classList.add('hidden'); });
   $('addBtn').addEventListener('click', addItem);
   $('imgBtn').addEventListener('click', () => { $('fileIn').dataset.target = 'new'; $('fileIn').click(); });
   $('fileIn').addEventListener('change', async e => {
