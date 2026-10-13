@@ -543,9 +543,37 @@
   }
   function autoGrow(ta){ ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, 400) + 'px'; }
 
+  /* ---------- リンクを外部ブラウザで開く ---------- */
+  // ホーム画面アプリ（standalone）で開いているときだけ、アプリ内ビューではなく外部ブラウザへ渡す
+  const IS_STANDALONE = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const IS_ANDROID = /Android/.test(navigator.userAgent);
+  function openExternal(url){
+    if (IS_STANDALONE && IS_IOS){
+      // Safariアプリで開く（x-safari-https: スキーム）。開けなかった場合は通常の開き方に切り替える
+      let left = false;
+      const onHide = () => { if (document.visibilityState === 'hidden') left = true; };
+      document.addEventListener('visibilitychange', onHide);
+      location.href = url.replace(/^http(s?):\/\//, 'x-safari-http$1://');
+      setTimeout(() => {
+        document.removeEventListener('visibilitychange', onHide);
+        if (!left) window.open(url, '_blank', 'noopener');
+      }, 1200);
+      return;
+    }
+    if (IS_STANDALONE && IS_ANDROID){
+      // 既定のブラウザアプリへ渡す（intent: スキーム）。失敗時はそのURLを開く
+      const m = url.match(/^(https?):\/\/(.*)$/);
+      location.href = 'intent://' + m[2] + '#Intent;scheme=' + m[1] + ';action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
   /* ---------- イベント ---------- */
   $('list').addEventListener('click', e => {
-    if (e.target.closest('.text a')) return; // リンクは編集モードに入らずそのまま開く
+    const link = e.target.closest('.text a');
+    if (link){ e.preventDefault(); openExternal(link.getAttribute('href')); return; } // リンクは編集モードに入らず外部ブラウザで開く
     const actEl = e.target.closest('[data-act]'); if (!actEl) return;
     const card = e.target.closest('.card'); const id = card && card.dataset.id; const act = actEl.dataset.act;
     if (Date.now() - swipeAt < 400) return;                       // スワイプ直後のクリックは無視
