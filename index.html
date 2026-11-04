@@ -189,6 +189,14 @@
   .due.set{border-style:solid; color:var(--soft); background:var(--bg);}
   .due.today{color:#b3731d; border-color:#b3731d; background:#fbf1e1; font-weight:600;}
   .due.over{color:var(--danger); border-color:var(--danger); background:#fbeceb; font-weight:600;}
+  button.due{font-family:inherit; background:transparent;}
+  .due-wrap{position:relative; display:inline-block;}
+  .due-menu{position:absolute; left:0; top:calc(100% + 6px); z-index:15; min-width:150px; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,.12); padding:4px;}
+  .dm{position:relative; display:block; width:100%; text-align:left; border:none; background:none; padding:8px 12px; font-size:14px; border-radius:8px; cursor:pointer; color:var(--ink);}
+  .dm:hover{background:var(--bg);}
+  .dm.rm{color:var(--danger);}
+  .due-field select{font:inherit; font-size:13.5px; border:1px solid var(--line); border-radius:8px; padding:3px 4px; background:#fff; color:var(--ink);}
+  .due-field .lbl{color:var(--accent); font-weight:600;}
   .due-in{position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; border:none; padding:0;}
   .due-field{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--soft);}
   .due-field input{font:inherit; font-size:14px; border:1px solid var(--line); border-radius:8px; padding:3px 6px; background:#fff; color:var(--ink);}
@@ -267,7 +275,7 @@
       <div class="compose-foot">
         <div class="compose-actions">
           <button class="img-btn" id="imgBtn" type="button">📷 画像</button>
-          <span class="due-field hidden" id="newDueWrap">📅 期限 <input type="date" id="newDue"></span>
+          <span class="due-field hidden" id="newDueWrap">📅 期限 <select id="newRough"><option value="">ざっくり</option><option value="week">今週中</option><option value="month">今月中</option><option value="year">今年中</option><option value="someday">いつか</option></select><input type="date" id="newDue"></span>
           <span class="compose-hint" id="composeHint"></span>
         </div>
         <button class="btn-add" id="addBtn">追加</button>
@@ -311,7 +319,8 @@
   let delAskId = null;   // PC: 「削除しますか？」表示中のカード
   let newImgs = [];      // 追加前の画像（dataURL）
   let editImgs = null;   // 編集中の画像
-  let editDue = '';      // 編集中の期限（YYYY-MM-DD）
+  let editDue = '';      // 編集中の期限
+  let dueMenuId = null;  // 期限メニューを開いているカード
   const MAX_IMGS = 4;
 
   const $ = id => document.getElementById(id);
@@ -340,19 +349,48 @@
   function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1600); }
   function setSync(state, text){ $('syncDot').className = 'dot ' + state; $('syncText').textContent = text; }
   function fmtDate(iso){ const d = new Date(iso); return (d.getMonth()+1) + '/' + d.getDate(); }
-  // 期限（YYYY-MM-DD）→ 今日からの日数 / 表示文字 / 状態
+  // 期限の値: 'YYYY-MM-DD'（日付）/ 'YYYY-MM'（○月中）/ 'YYYY'（○年中）/ 'someday'（いつか）
+  const pad2 = n => String(n).padStart(2, '0');
+  const ymdOf = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  const isDateDue = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+  // ざっくり選択 → 値（今週中は今週の日曜日の日付）
+  function roughValue(k){
+    const t = new Date();
+    if (k === 'week') return ymdOf(new Date(t.getFullYear(), t.getMonth(), t.getDate() + (7 - t.getDay()) % 7));
+    if (k === 'month') return t.getFullYear() + '-' + pad2(t.getMonth() + 1);
+    if (k === 'year') return String(t.getFullYear());
+    if (k === 'someday') return 'someday';
+    return '';
+  }
+  // 並べ替え用: その期限が終わる日
+  function dueEnd(due){
+    if (due === 'someday') return '9998-12-31';
+    if (/^\d{4}$/.test(due)) return due + '-12-31';
+    if (/^\d{4}-\d{2}$/.test(due)){ const [y, m] = due.split('-').map(Number); return due + '-' + pad2(new Date(y, m, 0).getDate()); }
+    return due;
+  }
+  // 期限 → 表示文字 / 状態
   function dueInfo(due){
+    const t = new Date(), todayS = ymdOf(t), cy = t.getFullYear(), cm = t.getMonth() + 1;
+    if (due === 'someday') return { label:'いつか', cls:'' };
+    const over = dueEnd(due) < todayS ? ' over' : '';
+    if (/^\d{4}$/.test(due)) return { label:(+due === cy ? '今年中' : due + '年中'), cls:over };
+    if (/^\d{4}-\d{2}$/.test(due)){
+      const [y, m] = due.split('-').map(Number);
+      return { label:(y === cy && m === cm ? '今月中' : y === cy ? m + '月中' : y + '年' + m + '月中'), cls:over };
+    }
     const [y, m, d] = due.split('-').map(Number);
-    const t = new Date(); const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
-    const diff = Math.round((new Date(y, m - 1, d) - today) / 86400000);
+    const diff = Math.round((new Date(y, m - 1, d) - new Date(cy, cm - 1, t.getDate())) / 86400000);
     const label = m + '/' + d + (diff < 0 ? '（' + (-diff) + '日超過）' : diff === 0 ? '（今日）' : diff === 1 ? '（明日）' : diff <= 7 ? '（あと' + diff + '日）' : '');
     return { label, cls: diff < 0 ? ' over' : diff === 0 ? ' today' : '' };
   }
   // 並び順: 期限が近い順（期限なしは下）。同じなら新しい順のまま
   function sortForShow(k, list){
     if (!hasDue(k)) return list;
-    return [...list].sort((a, b) => (a.due && b.due) ? (a.due < b.due ? -1 : a.due > b.due ? 1 : 0) : a.due ? -1 : b.due ? 1 : 0);
+    const key = x => x.due ? dueEnd(x.due) : null;
+    return [...list].sort((a, b) => { const ka = key(a), kb = key(b); return (ka && kb) ? (ka < kb ? -1 : ka > kb ? 1 : 0) : ka ? -1 : kb ? 1 : 0; });
   }
+  const ROUGH_OPTS = '<option value="">ざっくり</option><option value="week">今週中</option><option value="month">今月中</option><option value="year">今年中</option><option value="someday">いつか</option>';
 
   /* ---------- 画像（縮小・JPEG変換して本文と一緒に暗号化保存） ---------- */
   // 画像・期限なし＝従来どおり平文テキストのまま。あり＝先頭に \u0000 を付けたJSON（t:本文 i:画像 d:期限）
@@ -502,10 +540,10 @@
     const ta = $('newText'); const text = ta.value.trim();
     if (!text && !newImgs.length) return;
     const stage = (filter !== 'all' && filter !== 'trash') ? filter : 'memo';
-    const due = hasDue(stage) ? $('newDue').value : '';
+    const due = hasDue(stage) ? ($('newDue').value || roughValue($('newRough').value)) : '';
     const it = { id:uuid(), text, images:newImgs, due, stage, created_at:new Date().toISOString() };
     items.unshift(it); freshId = it.id;
-    newImgs = []; renderNewImgs(); $('newDue').value = '';
+    newImgs = []; renderNewImgs(); $('newDue').value = ''; $('newRough').value = '';
     ta.value = ''; autoGrow(ta); render();
     guarded(() => saveRow(it));
   }
@@ -567,7 +605,7 @@
     const check = (it.stage === 'todo' || it.stage === 'yaritai' || it.stage === 'done')
       ? '<button class="check ' + (it.stage === 'yaritai' || it.from === 'yaritai' ? 'y' : '') + '" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
     const bodyHtml = isEdit
-      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions">' + (hasDue(it.stage) ? '<span class="due-field">📅 <input type="date" id="editDue" value="' + esc(editDue) + '"><button class="x" data-act="clrdue" type="button" aria-label="期限を消す">✕</button></span>' : '') + '<button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
+      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions">' + (hasDue(it.stage) ? '<span class="due-field">📅 <span class="lbl" id="editDueLbl">' + (editDue ? dueInfo(editDue).label : '') + '</span><select id="editRough">' + ROUGH_OPTS + '</select><input type="date" id="editDue" value="' + esc(isDateDue(editDue) ? editDue : '') + '"><button class="x" data-act="clrdue" type="button" aria-label="期限を消す">✕</button></span>' : '') + '<button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
       : '<div class="text" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '') +
         ((it.images && it.images.length) ? '<div class="imgs">' + thumbsHtml(it.images, false) + '</div>' : '');
     const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
@@ -584,7 +622,11 @@
     let dueHtml = '';
     if (hasDue(it.stage) && !isEdit){
       const di = it.due ? dueInfo(it.due) : null;
-      dueHtml = '<label class="due' + (di ? ' set' + di.cls : '') + '">📅 ' + (di ? di.label : '期限') + '<input type="date" class="due-in" value="' + esc(it.due || '') + '" aria-label="期限"></label>';
+      const menu = dueMenuId !== it.id ? '' : '<div class="due-menu">' +
+        [['week','今週中'],['month','今月中'],['year','今年中'],['someday','いつか']].map(([v, l]) => '<button class="dm" data-act="dueset" data-v="' + v + '" type="button">' + l + '</button>').join('') +
+        '<label class="dm">日付を指定<input type="date" class="due-in" value="' + esc(isDateDue(it.due) ? it.due : '') + '" aria-label="日付を指定"></label>' +
+        (it.due ? '<button class="dm rm" data-act="dueset" data-v="clear" type="button">期限を消す</button>' : '') + '</div>';
+      dueHtml = '<span class="due-wrap"><button class="due' + (di ? ' set' + di.cls : '') + '" data-act="duemenu" type="button">📅 ' + (di ? di.label : '期限') + '</button>' + menu + '</span>';
     }
     return '<div class="cw"><button class="swdel" data-act="trash">削除</button><div class="card' + (it.stage === 'done' ? ' is-done' : '') + (isPick ? ' picking' : '') + (it.id === freshId ? ' fresh' : '') + '" data-id="' + it.id + '">' +
       '<div class="card-main">' + check + '<div class="body"' + (isEdit ? '' : ' data-act="edit"') + '>' + bodyHtml + '</div></div>' +
@@ -664,6 +706,7 @@
     if (act === 'trash' && !card){ const cw = e.target.closest('.cw'); trashItem(cw.querySelector('.card').dataset.id); return; }
     if (card && card.classList.contains('swiped')){ card.classList.remove('swiped'); return; } // 開いたカードはタップで閉じる
     if (act !== 'trash' && delAskId){ delAskId = null; render(); }
+    if (act !== 'duemenu' && act !== 'dueset' && dueMenuId){ dueMenuId = null; render(); }
     if (act === 'zoom'){
       const imgs = (editImgs && editingId === id) ? editImgs : ((items.find(x => x.id === id) || {}).images || []);
       zoom(imgs[+actEl.dataset.i]);
@@ -682,7 +725,12 @@
     else if (act === 'emptyTrash') purge(items.filter(x => x.stage === 'trash').map(x => x.id), 'ゴミ箱のメモをすべて完全に削除しますか？元に戻せません。');
     else if (act === 'more'){ expanded.add(id); render(); }
     else if (act === 'edit'){ const cur = items.find(x => x.id === id) || {}; editingId = id; editImgs = [...(cur.images || [])]; editDue = cur.due || ''; pickingId = null; render(); }
-    else if (act === 'clrdue'){ editDue = ''; $('editDue').value = ''; }
+    else if (act === 'duemenu'){ dueMenuId = (dueMenuId === id) ? null : id; render(); }
+    else if (act === 'dueset'){
+      const it = items.find(x => x.id === id), v = actEl.dataset.v;
+      it.due = v === 'clear' ? '' : roughValue(v); dueMenuId = null; render(); guarded(() => saveRow(it));
+    }
+    else if (act === 'clrdue'){ editDue = ''; $('editDue').value = ''; $('editRough').value = ''; $('editDueLbl').textContent = ''; }
     else if (act === 'cancel'){ editingId = null; editImgs = null; editDue = ''; render(); }
     else if (act === 'save') saveEdit(id, $('editArea').value);
   });
@@ -713,10 +761,16 @@
   });
   $('list').addEventListener('input', e => { if (e.target.id === 'editArea') autoGrow(e.target); });
   $('list').addEventListener('change', e => {
-    if (e.target.id === 'editDue'){ editDue = e.target.value; return; }
+    if (e.target.id === 'editDue' || e.target.id === 'editRough'){
+      const rough = e.target.id === 'editRough';
+      editDue = rough ? roughValue(e.target.value) : e.target.value;
+      if (rough) $('editDue').value = ''; else $('editRough').value = '';
+      $('editDueLbl').textContent = editDue ? dueInfo(editDue).label : '';
+      return;
+    }
     if (!e.target.classList.contains('due-in')) return;
     const it = items.find(x => x.id === e.target.closest('.card').dataset.id); if (!it) return;
-    it.due = e.target.value; render(); guarded(() => saveRow(it));
+    it.due = e.target.value; dueMenuId = null; render(); guarded(() => saveRow(it));
   });
   $('list').addEventListener('keydown', e => {
     if (e.target.id !== 'editArea') return;
@@ -724,6 +778,9 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
   });
   $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
+  $('newRough').addEventListener('change', () => { $('newDue').value = ''; });
+  $('newDue').addEventListener('change', () => { $('newRough').value = ''; });
+  document.addEventListener('click', e => { if (dueMenuId && !e.target.closest('.due-wrap')){ dueMenuId = null; render(); } });
   $('hubBtn').addEventListener('click', e => { e.stopPropagation(); $('hubMenu').classList.toggle('hidden'); });
   document.addEventListener('click', e => { if (!e.target.closest('#hubMenu')) $('hubMenu').classList.add('hidden'); });
   $('addBtn').addEventListener('click', addItem);
