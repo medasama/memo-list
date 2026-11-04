@@ -184,6 +184,18 @@
   .trash-actions .btn-sm.danger{color:var(--danger); border-color:var(--danger);}
   .card.in-trash .text{color:var(--soft);}
 
+  /* 期限 */
+  .due{position:relative; display:inline-flex; align-items:center; gap:3px; border:1px dashed var(--line); border-radius:999px; padding:2px 10px; font-size:12.5px; color:var(--faint); cursor:pointer; white-space:nowrap;}
+  .due.set{border-style:solid; color:var(--soft); background:var(--bg);}
+  .due.today{color:#b3731d; border-color:#b3731d; background:#fbf1e1; font-weight:600;}
+  .due.over{color:var(--danger); border-color:var(--danger); background:#fbeceb; font-weight:600;}
+  .due-in{position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; border:none; padding:0;}
+  .due-field{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--soft);}
+  .due-field input{font:inherit; font-size:14px; border:1px solid var(--line); border-radius:8px; padding:3px 6px; background:#fff; color:var(--ink);}
+  .due-field .x{border:none; background:none; color:var(--faint); cursor:pointer; font-size:13px; padding:2px 4px;}
+  .edit-actions{align-items:center; flex-wrap:wrap;}
+  .edit-actions .due-field{margin-right:auto;}
+
   .empty{text-align:center; color:var(--soft); padding:34px 20px 20px;}
   .empty img{width:120px; height:120px; border-radius:50%; object-fit:cover; mix-blend-mode:multiply; margin-bottom:6px;}
   .empty p{margin:0; font-size:15px;}
@@ -207,6 +219,15 @@
     opacity:0; transition:opacity .2s, transform .2s; pointer-events:none;
   }
   .toast.show{opacity:1; transform:translate(-50%,0);}
+
+  /* PC: 画面を広く使い、カードを2列に並べる（スマホは従来どおり縦長） */
+  @media (min-width:900px){
+    header, .wrap{max-width:1040px;}
+    header{padding-left:24px; padding-right:24px;}
+    .wrap{padding-left:20px; padding-right:20px;}
+    #list{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); column-gap:14px; align-items:start;}
+    #list > :not(.cw){grid-column:1 / -1;}
+  }
 </style>
 </head>
 <body>
@@ -246,6 +267,7 @@
       <div class="compose-foot">
         <div class="compose-actions">
           <button class="img-btn" id="imgBtn" type="button">📷 画像</button>
+          <span class="due-field hidden" id="newDueWrap">📅 期限 <input type="date" id="newDue"></span>
           <span class="compose-hint" id="composeHint"></span>
         </div>
         <button class="btn-add" id="addBtn">追加</button>
@@ -275,7 +297,8 @@
     { key:'todo',    label:'ToDo',   img:'characters/todo.jpg'    },
     { key:'done',    label:'済',     img:'characters/done.jpg'    }
   ];
-  const SHOW_ORDER = ['todo','yaritai','memo','done'];
+  const SHOW_ORDER = ['todo','memo','yaritai','done'];
+  const hasDue = k => k === 'todo' || k === 'yaritai';   // 期限を使うカテゴリ
   const stageOf = k => STAGES.find(s => s.key === k) || STAGES[0];
 
   let items = [];
@@ -288,6 +311,7 @@
   let delAskId = null;   // PC: 「削除しますか？」表示中のカード
   let newImgs = [];      // 追加前の画像（dataURL）
   let editImgs = null;   // 編集中の画像
+  let editDue = '';      // 編集中の期限（YYYY-MM-DD）
   const MAX_IMGS = 4;
 
   const $ = id => document.getElementById(id);
@@ -316,13 +340,26 @@
   function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1600); }
   function setSync(state, text){ $('syncDot').className = 'dot ' + state; $('syncText').textContent = text; }
   function fmtDate(iso){ const d = new Date(iso); return (d.getMonth()+1) + '/' + d.getDate(); }
+  // 期限（YYYY-MM-DD）→ 今日からの日数 / 表示文字 / 状態
+  function dueInfo(due){
+    const [y, m, d] = due.split('-').map(Number);
+    const t = new Date(); const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+    const diff = Math.round((new Date(y, m - 1, d) - today) / 86400000);
+    const label = m + '/' + d + (diff < 0 ? '（' + (-diff) + '日超過）' : diff === 0 ? '（今日）' : diff === 1 ? '（明日）' : diff <= 7 ? '（あと' + diff + '日）' : '');
+    return { label, cls: diff < 0 ? ' over' : diff === 0 ? ' today' : '' };
+  }
+  // 並び順: 期限が近い順（期限なしは下）。同じなら新しい順のまま
+  function sortForShow(k, list){
+    if (!hasDue(k)) return list;
+    return [...list].sort((a, b) => (a.due && b.due) ? (a.due < b.due ? -1 : a.due > b.due ? 1 : 0) : a.due ? -1 : b.due ? 1 : 0);
+  }
 
   /* ---------- 画像（縮小・JPEG変換して本文と一緒に暗号化保存） ---------- */
-  // 画像なし＝従来どおり平文テキストのまま。画像あり＝先頭に \u0000 を付けたJSON
-  const pack = (text, imgs) => (imgs && imgs.length) ? '\u0000' + JSON.stringify({ t:text, i:imgs }) : text;
+  // 画像・期限なし＝従来どおり平文テキストのまま。あり＝先頭に \u0000 を付けたJSON（t:本文 i:画像 d:期限）
+  const pack = (text, imgs, due) => ((imgs && imgs.length) || due) ? '\u0000' + JSON.stringify({ t:text, i:(imgs || []), d:(due || undefined) }) : text;
   const unpack = raw => {
-    if (raw.charCodeAt(0) === 0){ try { const o = JSON.parse(raw.slice(1)); return { text:o.t || '', images:o.i || [] }; } catch(e){} }
-    return { text:raw, images:[] };
+    if (raw.charCodeAt(0) === 0){ try { const o = JSON.parse(raw.slice(1)); return { text:o.t || '', images:o.i || [], due:o.d || '' }; } catch(e){} }
+    return { text:raw, images:[], due:'' };
   };
   function compressImage(file){
     return new Promise((res, rej) => {
@@ -391,14 +428,14 @@
     if (error) throw error;
     const out = [];
     for (const r of data){
-      try { const u = unpack(await dec(r.body, r.iv)); out.push({ id:r.id, text:u.text, images:u.images, ...decStage(r.stage), created_at:r.created_at }); }
+      try { const u = unpack(await dec(r.body, r.iv)); out.push({ id:r.id, text:u.text, images:u.images, due:u.due, ...decStage(r.stage), created_at:r.created_at }); }
       catch(e){ console.warn('復号できない行をスキップ', r.id); }
     }
     return out;
   }
   async function dbInsert(it){
     if (DEMO) return;
-    const e = await enc(pack(it.text, it.images));
+    const e = await enc(pack(it.text, it.images, it.due));
     const { error } = await sb.from(T_ITEMS).insert({ id:it.id, body:e.body, iv:e.iv, stage:encStage(it), created_at:it.created_at });
     if (error) throw error;
   }
@@ -431,16 +468,46 @@
     catch(e){ console.error(e); setSync('err','同期できません'); toast('保存に失敗しました'); }
   }
 
+  /* ---------- 送信待ちの控え（画面を離れた・通信失敗時でも消えないように） ---------- */
+  // 暗号化済みの行を端末に控えておき、保存できたら消す。残っていたら次回起動・復帰時に送り直す
+  const PENDING_KEY = 'memo_pending_rows';
+  const readPending = () => { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '{}'); } catch(e){ return {}; } };
+  const writePending = p => { try { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch(e){ console.warn('控えを保存できません', e); } };
+  const dropPending = id => { const p = readPending(); delete p[id]; writePending(p); };
+  async function saveRow(it){
+    if (DEMO) return;
+    const e = await enc(pack(it.text, it.images, it.due));
+    const row = { id:it.id, body:e.body, iv:e.iv, stage:encStage(it), created_at:it.created_at, updated_at:new Date().toISOString() };
+    const p = readPending(); p[it.id] = row; writePending(p);
+    const { error } = await sb.from(T_ITEMS).upsert(row);
+    if (error) throw error;
+    dropPending(it.id);
+  }
+  async function flushPending(){
+    if (DEMO || !sb) return;
+    const p = readPending(), ids = Object.keys(p); if (!ids.length) return;
+    const { data, error } = await sb.from(T_ITEMS).select('id,updated_at').in('id', ids);
+    if (error) throw error;
+    for (const id of ids){
+      const cur = (data || []).find(r => r.id === id);
+      // 他の端末でより新しく更新されていたら、古い控えで上書きしない
+      if (cur && cur.updated_at && new Date(cur.updated_at) > new Date(p[id].updated_at)){ dropPending(id); continue; }
+      const { error:e2 } = await sb.from(T_ITEMS).upsert(p[id]);
+      if (!e2) dropPending(id);
+    }
+  }
+
   /* ---------- 操作 ---------- */
   function addItem(){
     const ta = $('newText'); const text = ta.value.trim();
     if (!text && !newImgs.length) return;
     const stage = (filter !== 'all' && filter !== 'trash') ? filter : 'memo';
-    const it = { id:uuid(), text, images:newImgs, stage, created_at:new Date().toISOString() };
+    const due = hasDue(stage) ? $('newDue').value : '';
+    const it = { id:uuid(), text, images:newImgs, due, stage, created_at:new Date().toISOString() };
     items.unshift(it); freshId = it.id;
-    newImgs = []; renderNewImgs();
+    newImgs = []; renderNewImgs(); $('newDue').value = '';
     ta.value = ''; autoGrow(ta); render();
-    guarded(() => dbInsert(it));
+    guarded(() => saveRow(it));
   }
   function setStage(id, stage){
     const it = items.find(x => x.id === id); if (!it || it.stage === stage) return;
@@ -453,9 +520,19 @@
     const it = items.find(x => x.id === id); editingId = null;
     text = text.trim();
     const imgs = editImgs || (it && it.images) || []; editImgs = null;
-    const changed = it && (text !== it.text || JSON.stringify(imgs) !== JSON.stringify(it.images || []));
-    if (changed && (text || imgs.length)){ it.text = text; it.images = imgs; guarded(() => dbUpdate(id, {text, images:imgs})); }
+    const due = editDue; editDue = '';
+    const changed = it && (text !== it.text || JSON.stringify(imgs) !== JSON.stringify(it.images || []) || due !== (it.due || ''));
+    if (changed && (text || imgs.length)){ it.text = text; it.images = imgs; it.due = due; guarded(() => saveRow(it)); }
     render();
+  }
+  // 「追加」「保存」を押さずに画面を離れたとき、入力中の内容をそのまま保存する
+  function autoSaveOnLeave(){
+    if (DEMO || !masterKey) return;
+    let touched = false;
+    const ta = $('newText');
+    if (ta.value.trim() || newImgs.length){ addItem(); touched = true; }
+    if (editingId){ const ea = $('editArea'); saveEdit(editingId, ea ? ea.value : ''); touched = true; }
+    if (touched) toast('入力中の内容を保存しました');
   }
   function trashItem(id){
     const it = items.find(x => x.id === id); if (!it || it.stage === 'trash') return;
@@ -490,7 +567,7 @@
     const check = (it.stage === 'todo' || it.stage === 'yaritai' || it.stage === 'done')
       ? '<button class="check ' + (it.stage === 'yaritai' || it.from === 'yaritai' ? 'y' : '') + '" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
     const bodyHtml = isEdit
-      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions"><button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
+      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions">' + (hasDue(it.stage) ? '<span class="due-field">📅 <input type="date" id="editDue" value="' + esc(editDue) + '"><button class="x" data-act="clrdue" type="button" aria-label="期限を消す">✕</button></span>' : '') + '<button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
       : '<div class="text" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '') +
         ((it.images && it.images.length) ? '<div class="imgs">' + thumbsHtml(it.images, false) + '</div>' : '');
     const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
@@ -504,9 +581,14 @@
     const trashBtn = delAskId === it.id
       ? '<button class="trash-ask" data-act="trash">削除しますか？</button>'
       : '<button class="trash-ico" data-act="askdel" aria-label="ゴミ箱へ">🗑</button>';
+    let dueHtml = '';
+    if (hasDue(it.stage) && !isEdit){
+      const di = it.due ? dueInfo(it.due) : null;
+      dueHtml = '<label class="due' + (di ? ' set' + di.cls : '') + '">📅 ' + (di ? di.label : '期限') + '<input type="date" class="due-in" value="' + esc(it.due || '') + '" aria-label="期限"></label>';
+    }
     return '<div class="cw"><button class="swdel" data-act="trash">削除</button><div class="card' + (it.stage === 'done' ? ' is-done' : '') + (isPick ? ' picking' : '') + (it.id === freshId ? ' fresh' : '') + '" data-id="' + it.id + '">' +
       '<div class="card-main">' + check + '<div class="body"' + (isEdit ? '' : ' data-act="edit"') + '>' + bodyHtml + '</div></div>' +
-      '<div class="card-foot"><button class="stage-btn ' + st.key + '" data-act="pick"><img src="' + st.img + '" alt="">' + st.label + '</button><span class="date">' + fmtDate(it.created_at) + '</span>' + trashBtn + '</div>' +
+      '<div class="card-foot"><button class="stage-btn ' + st.key + '" data-act="pick"><img src="' + st.img + '" alt="">' + st.label + '</button>' + dueHtml + '<span class="date">' + fmtDate(it.created_at) + '</span>' + trashBtn + '</div>' +
       picker + '</div></div>';
   }
   function render(){
@@ -517,12 +599,13 @@
       SHOW_ORDER.map(k => { const s = stageOf(k); return '<button class="chip' + (filter===k?' active':'') + '" data-f="' + k + '">' + s.label + '<span class="n">' + cnt(k) + '</span></button>'; }).join('') +
       (cnt('trash') || filter === 'trash' ? '<button class="chip' + (filter==='trash'?' active':'') + '" data-f="trash">🗑 ゴミ箱<span class="n">' + cnt('trash') + '</span></button>' : '');
     $('composeHint').textContent = (filter === 'all' || filter === 'trash') ? '「メモ」に入ります' : '「' + stageOf(filter).label + '」に入ります';
+    $('newDueWrap').classList.toggle('hidden', !hasDue(filter));
 
     let html = '';
     const keys = filter === 'all' ? SHOW_ORDER : [filter];
     if (filter === 'trash' && cnt('trash')) html += '<div style="text-align:right"><button class="link-btn" data-act="emptyTrash">ゴミ箱を空にする</button></div>';
     for (const k of keys){
-      const list = items.filter(x => x.stage === k);
+      const list = sortForShow(k, items.filter(x => x.stage === k));
       if (filter === 'all' && !list.length) continue;
       const s = stageOf(k);
       const collapsed = (filter === 'all' && k === 'done' && !doneOpen);
@@ -572,6 +655,7 @@
 
   /* ---------- イベント ---------- */
   $('list').addEventListener('click', e => {
+    if (e.target.classList.contains('due-in')){ try { e.target.showPicker(); } catch(_){} return; } // 期限: PCでもカレンダーを開く
     const link = e.target.closest('.text a');
     if (link){ e.preventDefault(); openExternal(link.getAttribute('href')); return; } // リンクは編集モードに入らず外部ブラウザで開く
     const actEl = e.target.closest('[data-act]'); if (!actEl) return;
@@ -597,8 +681,9 @@
     else if (act === 'purge') purge([id], 'このメモを完全に削除しますか？元に戻せません。');
     else if (act === 'emptyTrash') purge(items.filter(x => x.stage === 'trash').map(x => x.id), 'ゴミ箱のメモをすべて完全に削除しますか？元に戻せません。');
     else if (act === 'more'){ expanded.add(id); render(); }
-    else if (act === 'edit'){ editingId = id; editImgs = [...((items.find(x => x.id === id) || {}).images || [])]; pickingId = null; render(); }
-    else if (act === 'cancel'){ editingId = null; editImgs = null; render(); }
+    else if (act === 'edit'){ const cur = items.find(x => x.id === id) || {}; editingId = id; editImgs = [...(cur.images || [])]; editDue = cur.due || ''; pickingId = null; render(); }
+    else if (act === 'clrdue'){ editDue = ''; $('editDue').value = ''; }
+    else if (act === 'cancel'){ editingId = null; editImgs = null; editDue = ''; render(); }
     else if (act === 'save') saveEdit(id, $('editArea').value);
   });
   /* 左スワイプで「削除」を表示 */
@@ -627,9 +712,15 @@
     card.classList.toggle('swiped', base + dx < -44);
   });
   $('list').addEventListener('input', e => { if (e.target.id === 'editArea') autoGrow(e.target); });
+  $('list').addEventListener('change', e => {
+    if (e.target.id === 'editDue'){ editDue = e.target.value; return; }
+    if (!e.target.classList.contains('due-in')) return;
+    const it = items.find(x => x.id === e.target.closest('.card').dataset.id); if (!it) return;
+    it.due = e.target.value; render(); guarded(() => saveRow(it));
+  });
   $('list').addEventListener('keydown', e => {
     if (e.target.id !== 'editArea') return;
-    if (e.key === 'Escape'){ editingId = null; editImgs = null; render(); }
+    if (e.key === 'Escape'){ editingId = null; editImgs = null; editDue = ''; render(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
   });
   $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
@@ -675,7 +766,11 @@
     sb.channel('memo_items_changes').on('postgres_changes', {event:'*', schema:'public', table:T_ITEMS}, scheduleResync)
       .subscribe(st => { if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') setTimeout(subscribe, 3000); });
   }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !DEMO && masterKey) resync(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden'){ autoSaveOnLeave(); return; }
+    if (!DEMO && masterKey) flushPending().catch(e => console.error(e)).finally(resync);
+  });
+  window.addEventListener('pagehide', autoSaveOnLeave);
 
   /* ---------- 起動 ---------- */
   function showApp(){ $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); }
@@ -715,6 +810,7 @@
   }
   async function start(){
     showApp(); setSync('', '同期中');
+    try { await flushPending(); } catch(e){ console.error(e); }
     try { items = await loadAll(); setSync('ok','同期済み'); }
     catch(e){ console.error(e); setSync('err','同期できません'); }
     render(); if (!DEMO) subscribe();
@@ -722,10 +818,13 @@
   async function init(){
     if (DEMO){
       const d = (n) => new Date(Date.now() - n*86400000).toISOString();
+      const ymd = (n) => { const t = new Date(Date.now() + n*86400000); return t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0') + '-' + String(t.getDate()).padStart(2,'0'); };
       items = [
-        { id:'1', text:'確定申告の書類を揃える', stage:'todo', created_at:d(1) },
-        { id:'2', text:'ツール整理を終わらせる。\nメモ系は統合せず、それぞれ独立で磨く。', stage:'todo', created_at:d(2) },
-        { id:'3', text:'ホームページのトップを作り直したい。事務所の紹介と料金の目安、相談の流れが一目で分かるようにして、スマホでも読みやすくする。写真は使わず、文字とイラストだけで落ち着いた雰囲気にしたい。あとで参考サイトも集める。', stage:'yaritai', created_at:d(4) },
+        { id:'1', text:'確定申告の書類を揃える', stage:'todo', due:ymd(9), created_at:d(1) },
+        { id:'2', text:'ツール整理を終わらせる。\nメモ系は統合せず、それぞれ独立で磨く。', stage:'todo', due:ymd(0), created_at:d(2) },
+        { id:'6', text:'書類の提出（期限なし）', stage:'todo', created_at:d(0) },
+        { id:'7', text:'更新手続き（期限切れ）', stage:'todo', due:ymd(-2), created_at:d(5) },
+        { id:'3', text:'ホームページのトップを作り直したい。事務所の紹介と料金の目安、相談の流れが一目で分かるようにして、スマホでも読みやすくする。写真は使わず、文字とイラストだけで落ち着いた雰囲気にしたい。あとで参考サイトも集める。', stage:'yaritai', due:ymd(3), created_at:d(4) },
         { id:'4', text:'マインドマップにコメントをつけたい', stage:'memo', created_at:d(0) },
         { id:'5', text:'旧素材帳を削除', stage:'done', created_at:d(3) }
       ];
