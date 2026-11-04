@@ -75,6 +75,12 @@
   }
   .btn-add:active{opacity:.8;}
 
+  /* 検索 */
+  .search{margin:0 0 8px;}
+  .search input{width:100%; border:1px solid var(--line); border-radius:999px; background:var(--card); padding:8px 16px; font:inherit; font-size:15px; color:var(--ink); outline:none; -webkit-appearance:none; appearance:none;}
+  .search input:focus{border-color:var(--accent);}
+  .search input::placeholder{color:var(--faint);}
+
   /* フィルタ */
   .chips{display:flex; gap:6px; overflow-x:auto; margin:0 0 6px; padding:2px 0 6px;}
   .chips::-webkit-scrollbar{display:none;}
@@ -286,6 +292,7 @@
       </div>
       <input type="file" id="fileIn" accept="image/*" multiple class="hidden">
     </div>
+    <div class="search"><input type="search" id="q" placeholder="🔍 検索" autocomplete="off" enterkeyhint="search"></div>
     <div class="chips" id="chips"></div>
     <div id="list"></div>
   </div>
@@ -325,6 +332,8 @@
   let editImgs = null;   // 編集中の画像
   let editDue = '';      // 編集中の期限
   let dueMenuId = null;  // 期限メニューを開いているカード
+  let query = '';        // 検索語（小文字・前後の空白なし）
+  const matchQuery = it => !query || it.text.toLowerCase().includes(query);
   const MAX_IMGS = 4;
 
   const $ = id => document.getElementById(id);
@@ -557,7 +566,7 @@
     const it = { id:uuid(), text, images:newImgs, due, stage, created_at:new Date().toISOString() };
     items.unshift(it); freshId = it.id;
     newImgs = []; renderNewImgs(); $('newDue').value = ''; $('newRough').value = ''; $('newYears').value = '';
-    ta.value = ''; autoGrow(ta); render();
+    ta.value = ''; autoGrow(ta); query = ''; $('q').value = ''; render();   // 追加したメモが隠れないよう検索を解除
     guarded(() => saveRow(it));
   }
   function setStage(id, stage){
@@ -661,20 +670,23 @@
     const keys = filter === 'all' ? SHOW_ORDER : [filter];
     if (filter === 'trash' && cnt('trash')) html += '<div style="text-align:right"><button class="link-btn" data-act="emptyTrash">ゴミ箱を空にする</button></div>';
     for (const k of keys){
-      const list = sortForShow(k, items.filter(x => x.stage === k));
-      if (filter === 'all' && !list.length) continue;
+      const list = sortForShow(k, items.filter(x => x.stage === k && matchQuery(x)));
+      if ((filter === 'all' || query) && !list.length) continue;
       const s = stageOf(k);
-      const collapsed = (filter === 'all' && k === 'done' && !doneOpen);
+      const collapsed = (filter === 'all' && k === 'done' && !doneOpen && !query);   // 検索中は済も開く
       if (filter === 'all'){
         html += '<div class="sec-head"><img class="stage-ico" src="' + s.img + '" alt="">' + s.label + '<span class="n">' + list.length + '</span>' +
-          (k === 'done' ? '<button class="toggle" data-act="toggleDone">' + (doneOpen ? '閉じる' : '開く') + '</button>' : '') + '</div>';
+          (k === 'done' && !query ? '<button class="toggle" data-act="toggleDone">' + (doneOpen ? '閉じる' : '開く') + '</button>' : '') + '</div>';
       }
       if (!collapsed) html += list.map(cardHtml).join('');
-      if (k === 'done' && !collapsed && list.length) html += '<div style="text-align:right"><button class="link-btn" data-act="clearDone">済をすべて削除</button></div>';
+      if (k === 'done' && !collapsed && list.length && !query) html += '<div style="text-align:right"><button class="link-btn" data-act="clearDone">済をすべて削除</button></div>';
     }
     if (!live.length && filter !== 'trash' || (filter !== 'all' && !cnt(filter))){
       const msg = filter === 'trash' ? 'ゴミ箱は空です。' : !live.length ? 'まだ何もありません。<br>思いついたことを、上に書いてみてください。' : 'ここには何もありません。';
       html = '<div class="empty"><img src="characters/' + ((filter==='all'||filter==='trash')?'memo':filter) + '.jpg" alt=""><p>' + msg + '</p></div>';
+    }
+    else if (query && !html.includes('class="cw"')){
+      html = '<div class="empty"><img src="characters/memo.jpg" alt=""><p>「' + esc(query) + '」は見つかりませんでした。</p></div>';
     }
     $('list').innerHTML = html;
     freshId = null;
@@ -799,6 +811,7 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
   });
   $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
+  $('q').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
   $('newRough').addEventListener('change', () => { $('newDue').value = ''; $('newYears').value = ''; });
   $('newDue').addEventListener('change', () => { $('newRough').value = ''; $('newYears').value = ''; });
   $('newYears').addEventListener('input', () => { $('newDue').value = ''; $('newRough').value = ''; });
