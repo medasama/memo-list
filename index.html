@@ -195,6 +195,10 @@
   .dm{position:relative; display:block; width:100%; text-align:left; border:none; background:none; padding:8px 12px; font-size:14px; border-radius:8px; cursor:pointer; color:var(--ink);}
   .dm:hover{background:var(--bg);}
   .dm.rm{color:var(--danger);}
+  .yrs-row{cursor:default; white-space:nowrap;}
+  .yrs-row:hover{background:none;}
+  .yrs{width:3.4em; font:inherit; font-size:14px; border:1px solid var(--line); border-radius:8px; padding:3px 6px; background:#fff; color:var(--ink); text-align:center;}
+  .yrs-ok{border:none; background:var(--ink); color:#fff; font-size:12.5px; border-radius:999px; padding:3px 12px; cursor:pointer; margin-left:4px;}
   .due-field select{font:inherit; font-size:13.5px; border:1px solid var(--line); border-radius:8px; padding:3px 4px; background:#fff; color:var(--ink);}
   .due-field .lbl{color:var(--accent); font-weight:600;}
   .due-in{position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; border:none; padding:0;}
@@ -275,7 +279,7 @@
       <div class="compose-foot">
         <div class="compose-actions">
           <button class="img-btn" id="imgBtn" type="button">📷 画像</button>
-          <span class="due-field hidden" id="newDueWrap">📅 期限 <select id="newRough"><option value="">ざっくり</option><option value="week">今週中</option><option value="month">今月中</option><option value="year">今年中</option><option value="someday">いつか</option></select><input type="date" id="newDue"></span>
+          <span class="due-field hidden" id="newDueWrap">📅 期限 <select id="newRough"><option value="">ざっくり</option><option value="week">今週中</option><option value="month">今月中</option><option value="year">今年中</option><option value="next">来年中</option><option value="someday">いつか</option></select><input type="number" id="newYears" class="yrs" min="1" max="99" placeholder="○">年以内 <input type="date" id="newDue"></span>
           <span class="compose-hint" id="composeHint"></span>
         </div>
         <button class="btn-add" id="addBtn">追加</button>
@@ -359,12 +363,20 @@
     if (k === 'week') return ymdOf(new Date(t.getFullYear(), t.getMonth(), t.getDate() + (7 - t.getDay()) % 7));
     if (k === 'month') return t.getFullYear() + '-' + pad2(t.getMonth() + 1);
     if (k === 'year') return String(t.getFullYear());
+    if (k === 'next') return String(t.getFullYear() + 1);
     if (k === 'someday') return 'someday';
     return '';
+  }
+  // ◯年以内 → 'Ny:YYYY-MM-DD'（今日からN年後の日付まで）。数字が不正なら空
+  function yearsValue(n){
+    n = parseInt(n, 10); if (!(n >= 1 && n <= 99)) return '';
+    const t = new Date();
+    return n + 'y:' + ymdOf(new Date(t.getFullYear() + n, t.getMonth(), t.getDate()));
   }
   // 並べ替え用: その期限が終わる日
   function dueEnd(due){
     if (due === 'someday') return '9998-12-31';
+    if (/^\d+y:/.test(due)) return due.split(':')[1];
     if (/^\d{4}$/.test(due)) return due + '-12-31';
     if (/^\d{4}-\d{2}$/.test(due)){ const [y, m] = due.split('-').map(Number); return due + '-' + pad2(new Date(y, m, 0).getDate()); }
     return due;
@@ -374,7 +386,8 @@
     const t = new Date(), todayS = ymdOf(t), cy = t.getFullYear(), cm = t.getMonth() + 1;
     if (due === 'someday') return { label:'いつか', cls:'' };
     const over = dueEnd(due) < todayS ? ' over' : '';
-    if (/^\d{4}$/.test(due)) return { label:(+due === cy ? '今年中' : due + '年中'), cls:over };
+    if (/^\d+y:/.test(due)){ const [n, e] = due.split(':'); return { label:parseInt(n, 10) + '年以内（〜' + e.slice(0, 4) + '/' + +e.slice(5, 7) + '）', cls:over }; }
+    if (/^\d{4}$/.test(due)) return { label:(+due === cy ? '今年中' : +due === cy + 1 ? '来年中' : due + '年中'), cls:over };
     if (/^\d{4}-\d{2}$/.test(due)){
       const [y, m] = due.split('-').map(Number);
       return { label:(y === cy && m === cm ? '今月中' : y === cy ? m + '月中' : y + '年' + m + '月中'), cls:over };
@@ -390,7 +403,7 @@
     const key = x => x.due ? dueEnd(x.due) : null;
     return [...list].sort((a, b) => { const ka = key(a), kb = key(b); return (ka && kb) ? (ka < kb ? -1 : ka > kb ? 1 : 0) : ka ? -1 : kb ? 1 : 0; });
   }
-  const ROUGH_OPTS = '<option value="">ざっくり</option><option value="week">今週中</option><option value="month">今月中</option><option value="year">今年中</option><option value="someday">いつか</option>';
+  const ROUGH_OPTS = '<option value="">ざっくり</option><option value="week">今週中</option><option value="month">今月中</option><option value="year">今年中</option><option value="next">来年中</option><option value="someday">いつか</option>';
 
   /* ---------- 画像（縮小・JPEG変換して本文と一緒に暗号化保存） ---------- */
   // 画像・期限なし＝従来どおり平文テキストのまま。あり＝先頭に \u0000 を付けたJSON（t:本文 i:画像 d:期限）
@@ -540,10 +553,10 @@
     const ta = $('newText'); const text = ta.value.trim();
     if (!text && !newImgs.length) return;
     const stage = (filter !== 'all' && filter !== 'trash') ? filter : 'memo';
-    const due = hasDue(stage) ? ($('newDue').value || roughValue($('newRough').value)) : '';
+    const due = hasDue(stage) ? ($('newDue').value || roughValue($('newRough').value) || yearsValue($('newYears').value)) : '';
     const it = { id:uuid(), text, images:newImgs, due, stage, created_at:new Date().toISOString() };
     items.unshift(it); freshId = it.id;
-    newImgs = []; renderNewImgs(); $('newDue').value = ''; $('newRough').value = '';
+    newImgs = []; renderNewImgs(); $('newDue').value = ''; $('newRough').value = ''; $('newYears').value = '';
     ta.value = ''; autoGrow(ta); render();
     guarded(() => saveRow(it));
   }
@@ -605,7 +618,7 @@
     const check = (it.stage === 'todo' || it.stage === 'yaritai' || it.stage === 'done')
       ? '<button class="check ' + (it.stage === 'yaritai' || it.from === 'yaritai' ? 'y' : '') + '" data-act="check" aria-label="完了にする"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '';
     const bodyHtml = isEdit
-      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions">' + (hasDue(it.stage) ? '<span class="due-field">📅 <span class="lbl" id="editDueLbl">' + (editDue ? dueInfo(editDue).label : '') + '</span><select id="editRough">' + ROUGH_OPTS + '</select><input type="date" id="editDue" value="' + esc(isDateDue(editDue) ? editDue : '') + '"><button class="x" data-act="clrdue" type="button" aria-label="期限を消す">✕</button></span>' : '') + '<button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
+      ? '<textarea class="edit-area" id="editArea">' + esc(it.text) + '</textarea><div class="imgs">' + thumbsHtml(editImgs || [], true) + '</div><div class="edit-actions">' + (hasDue(it.stage) ? '<span class="due-field">📅 <span class="lbl" id="editDueLbl">' + (editDue ? dueInfo(editDue).label : '') + '</span><select id="editRough">' + ROUGH_OPTS + '</select><input type="number" id="editYears" class="yrs" min="1" max="99" placeholder="○" value="' + ((/^(\d+)y:/.exec(editDue) || [])[1] || '') + '">年以内 <input type="date" id="editDue" value="' + esc(isDateDue(editDue) ? editDue : '') + '"><button class="x" data-act="clrdue" type="button" aria-label="期限を消す">✕</button></span>' : '') + '<button class="img-btn" data-act="addimg" type="button">📷 画像</button><button class="btn-sm" data-act="cancel">キャンセル</button><button class="btn-sm primary" data-act="save">保存</button></div>'
       : '<div class="text" style="' + (open ? '-webkit-line-clamp:unset;' : '') + '">' + linkify(it.text) + '</div>' + (long && !open ? '<button class="more" data-act="more">続きを読む</button>' : '') +
         ((it.images && it.images.length) ? '<div class="imgs">' + thumbsHtml(it.images, false) + '</div>' : '');
     const picker = '<div class="picker"><div class="picker-row">' + STAGES.map(s =>
@@ -623,7 +636,8 @@
     if (hasDue(it.stage) && !isEdit){
       const di = it.due ? dueInfo(it.due) : null;
       const menu = dueMenuId !== it.id ? '' : '<div class="due-menu">' +
-        [['week','今週中'],['month','今月中'],['year','今年中'],['someday','いつか']].map(([v, l]) => '<button class="dm" data-act="dueset" data-v="' + v + '" type="button">' + l + '</button>').join('') +
+        [['week','今週中'],['month','今月中'],['year','今年中'],['next','来年中'],['someday','いつか']].map(([v, l]) => '<button class="dm" data-act="dueset" data-v="' + v + '" type="button">' + l + '</button>').join('') +
+        '<div class="dm yrs-row"><input type="number" class="yrs yrs-in" min="1" max="99" placeholder="○" aria-label="何年以内"> 年以内 <button class="yrs-ok" data-act="dueyears" type="button">決定</button></div>' +
         '<label class="dm">日付を指定<input type="date" class="due-in" value="' + esc(isDateDue(it.due) ? it.due : '') + '" aria-label="日付を指定"></label>' +
         (it.due ? '<button class="dm rm" data-act="dueset" data-v="clear" type="button">期限を消す</button>' : '') + '</div>';
       dueHtml = '<span class="due-wrap"><button class="due' + (di ? ' set' + di.cls : '') + '" data-act="duemenu" type="button">📅 ' + (di ? di.label : '期限') + '</button>' + menu + '</span>';
@@ -706,7 +720,7 @@
     if (act === 'trash' && !card){ const cw = e.target.closest('.cw'); trashItem(cw.querySelector('.card').dataset.id); return; }
     if (card && card.classList.contains('swiped')){ card.classList.remove('swiped'); return; } // 開いたカードはタップで閉じる
     if (act !== 'trash' && delAskId){ delAskId = null; render(); }
-    if (act !== 'duemenu' && act !== 'dueset' && dueMenuId){ dueMenuId = null; render(); }
+    if (act !== 'duemenu' && act !== 'dueset' && act !== 'dueyears' && dueMenuId){ dueMenuId = null; render(); }
     if (act === 'zoom'){
       const imgs = (editImgs && editingId === id) ? editImgs : ((items.find(x => x.id === id) || {}).images || []);
       zoom(imgs[+actEl.dataset.i]);
@@ -730,7 +744,12 @@
       const it = items.find(x => x.id === id), v = actEl.dataset.v;
       it.due = v === 'clear' ? '' : roughValue(v); dueMenuId = null; render(); guarded(() => saveRow(it));
     }
-    else if (act === 'clrdue'){ editDue = ''; $('editDue').value = ''; $('editRough').value = ''; $('editDueLbl').textContent = ''; }
+    else if (act === 'dueyears'){
+      const it = items.find(x => x.id === id), v = yearsValue(actEl.closest('.due-menu').querySelector('.yrs-in').value);
+      if (!v){ toast('1〜99の数字を入れてください'); return; }
+      it.due = v; dueMenuId = null; render(); guarded(() => saveRow(it));
+    }
+    else if (act === 'clrdue'){ editDue = ''; $('editDue').value = ''; $('editRough').value = ''; $('editYears').value = ''; $('editDueLbl').textContent = ''; }
     else if (act === 'cancel'){ editingId = null; editImgs = null; editDue = ''; render(); }
     else if (act === 'save') saveEdit(id, $('editArea').value);
   });
@@ -761,10 +780,12 @@
   });
   $('list').addEventListener('input', e => { if (e.target.id === 'editArea') autoGrow(e.target); });
   $('list').addEventListener('change', e => {
-    if (e.target.id === 'editDue' || e.target.id === 'editRough'){
-      const rough = e.target.id === 'editRough';
-      editDue = rough ? roughValue(e.target.value) : e.target.value;
-      if (rough) $('editDue').value = ''; else $('editRough').value = '';
+    if (e.target.id === 'editDue' || e.target.id === 'editRough' || e.target.id === 'editYears'){
+      const id = e.target.id;
+      editDue = id === 'editRough' ? roughValue(e.target.value) : id === 'editYears' ? yearsValue(e.target.value) : e.target.value;
+      if (id !== 'editDue') $('editDue').value = '';
+      if (id !== 'editRough') $('editRough').value = '';
+      if (id !== 'editYears') $('editYears').value = '';
       $('editDueLbl').textContent = editDue ? dueInfo(editDue).label : '';
       return;
     }
@@ -778,8 +799,11 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ const id = e.target.closest('.card').dataset.id; saveEdit(id, e.target.value); }
   });
   $('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b){ filter = b.dataset.f; render(); } });
-  $('newRough').addEventListener('change', () => { $('newDue').value = ''; });
-  $('newDue').addEventListener('change', () => { $('newRough').value = ''; });
+  $('newRough').addEventListener('change', () => { $('newDue').value = ''; $('newYears').value = ''; });
+  $('newDue').addEventListener('change', () => { $('newRough').value = ''; $('newYears').value = ''; });
+  $('newYears').addEventListener('input', () => { $('newDue').value = ''; $('newRough').value = ''; });
+  // 期限メニューの「○年以内」: Enterで決定
+  $('list').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.classList.contains('yrs-in')){ e.preventDefault(); e.target.closest('.due-menu').querySelector('[data-act=dueyears]').click(); } });
   document.addEventListener('click', e => { if (dueMenuId && !e.target.closest('.due-wrap')){ dueMenuId = null; render(); } });
   $('hubBtn').addEventListener('click', e => { e.stopPropagation(); $('hubMenu').classList.toggle('hidden'); });
   document.addEventListener('click', e => { if (!e.target.closest('#hubMenu')) $('hubMenu').classList.add('hidden'); });
